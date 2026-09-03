@@ -5,7 +5,7 @@
 
 import type { ReactNode } from "react";
 import { AssistantText, ErrorBubble, UserBubble } from "./MessageBubble";
-import type { AssistantChatItem, ChatItem, UISegment } from "./protocol";
+import type { AssistantChatItem, ChatItem, ToolRun, UISegment } from "./protocol";
 import { Suggestions } from "./Suggestions";
 
 export interface TranscriptProps {
@@ -21,8 +21,57 @@ export interface TranscriptProps {
   gap?: string;
 }
 
-/** What shows under a reply while it is being made: the current step, or a shimmer before the first word. */
+const MAX_VISIBLE_TOOL_RUNS = 4;
+
+function ToolRunLine({ run }: { run: ToolRun }) {
+  const status =
+    run.status === "running"
+      ? "Running"
+      : run.status === "completed"
+        ? "Completed"
+        : run.status === "blocked"
+          ? "Blocked"
+          : "Failed";
+  const marker =
+    run.status === "running" ? (
+      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-(--accent) motion-reduce:animate-none" />
+    ) : run.status === "completed" ? (
+      <span className="text-[12px] font-bold text-(--ok)">✓</span>
+    ) : run.status === "blocked" ? (
+      <span className="text-[12px] font-bold text-(--warn)">!</span>
+    ) : (
+      <span className="text-[12px] font-bold text-(--danger)">×</span>
+    );
+
+  return (
+    <div className="flex min-w-0 items-center gap-2 text-[13px]">
+      <span aria-hidden="true" className="flex h-4 w-4 shrink-0 items-center justify-center">
+        {marker}
+      </span>
+      <span className="min-w-0 truncate font-medium text-(--ink-2)" title={run.name}>
+        {run.name}
+      </span>
+      <span className="ml-auto shrink-0 text-[11px] text-(--ink-soft)">{status}</span>
+    </div>
+  );
+}
+
+/** What shows under a reply while it is being made: its tool calls, current step, or a shimmer. */
 export function ActivityLine({ item }: { item: AssistantChatItem }) {
+  if (item.toolRuns.length) {
+    const hidden = Math.max(0, item.toolRuns.length - MAX_VISIBLE_TOOL_RUNS);
+    const visible = item.toolRuns.slice(-MAX_VISIBLE_TOOL_RUNS);
+    return (
+      <div role="status" aria-live="polite" className="flex w-full max-w-sm flex-col gap-1.5">
+        {hidden ? (
+          <div className="pl-6 text-[11px] text-(--ink-soft)">+{hidden} earlier tool calls</div>
+        ) : null}
+        {visible.map((run) => (
+          <ToolRunLine key={run.id} run={run} />
+        ))}
+      </div>
+    );
+  }
   if (item.activity) {
     return (
       <div role="status" className="flex items-center gap-2 text-[13px] text-(--ink-soft)">

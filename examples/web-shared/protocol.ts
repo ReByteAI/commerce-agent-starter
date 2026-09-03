@@ -90,6 +90,15 @@ export interface UserChatItem {
   text: string;
 }
 
+export type ToolRunStatus = "running" | "completed" | "failed" | "blocked";
+
+/** Compact lifecycle state for a tool call shown while its turn is running. */
+export interface ToolRun {
+  id: string;
+  name: string;
+  status: ToolRunStatus;
+}
+
 export interface AssistantChatItem {
   kind: "assistant";
   turn: number;
@@ -100,6 +109,7 @@ export interface AssistantChatItem {
   suggestionsStale?: boolean;
   pending: boolean;
   tools: string[];
+  toolRuns: ToolRun[];
   /**
    * Status line for the call in flight; cleared when prose or a card lands, or when the
    * tool a progress line names returns.

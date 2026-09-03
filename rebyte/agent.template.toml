@@ -3,7 +3,7 @@
 
 name = "ACME Shopping Agent"
 description = "Shopping agent for the fictional ACME storefront"
-llm = "gpt-5.4-mini"
+llm = "deepseek-v4-pro"
 max_steps = 32
 prompt_file = "../shopping-agent/managed-agents/shopping-agent/system.md"
 

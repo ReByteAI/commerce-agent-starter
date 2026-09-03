@@ -19,6 +19,7 @@ import type {
   ChatItem,
   MemoryFact,
   ToolCallData,
+  ToolRunStatus,
   TraceEntry,
   UIBlock,
   UISlotStatus,
@@ -353,14 +354,26 @@ export function useAgentTurn(api: AgentApi, options: AgentTurnOptions): AgentTur
           progressToolRef.current = null;
           const data = event.data as Partial<ToolCallData>;
           const tool = String(data.tool ?? "tool");
+          if (typeof data.id !== "string" || !data.id) {
+            throw new Error("tool_call event is missing its id");
+          }
+          const callId = data.id;
           const input = data.input ?? {};
           // The model's own line for the call when it carries one, else the stock copy.
           const label = typeof data.label === "string" ? data.label.trim() : "";
-          updateTurn(turn, (item) => ({
-            ...item,
-            tools: [...item.tools, tool],
-            activity: label || describeToolCall(tool, input),
-          }));
+          updateTurn(turn, (item) => {
+            const index = item.toolRuns.findIndex((run) => run.id === callId);
+            const toolRuns = [...item.toolRuns];
+            const running = { id: callId, name: tool, status: "running" as const };
+            if (index === -1) toolRuns.push(running);
+            else toolRuns[index] = running;
+            return {
+              ...item,
+              tools: [...item.tools, tool],
+              toolRuns,
+              activity: label || describeToolCall(tool, input),
+            };
+          });
           const component = callbacks.current.pendingComponent?.(tool);
           if (component && !findSlot(component)) {
             const slot = openSlot(turn, component, "pending");
@@ -372,6 +385,26 @@ export function useAgentTurn(api: AgentApi, options: AgentTurnOptions): AgentTur
         }
         case "tool_result": {
           const resultTool = String(event.data.tool ?? "tool");
+          if (typeof event.data.id !== "string" || !event.data.id) {
+            throw new Error("tool_result event is missing its id");
+          }
+          if (typeof event.data.status !== "string" || !event.data.status) {
+            throw new Error("tool_result event is missing its status");
+          }
+          const callId = event.data.id;
+          const resultStatus = event.data.status;
+          const toolRunStatus: ToolRunStatus =
+            resultStatus === "blocked"
+              ? "blocked"
+              : event.data.is_error || resultStatus === "error"
+                ? "failed"
+                : "completed";
+          updateTurn(turn, (item) => ({
+            ...item,
+            toolRuns: item.toolRuns.map((run) =>
+              run.id === callId ? { ...run, status: toolRunStatus } : run,
+            ),
+          }));
           if (progressToolRef.current === resultTool) {
             progressToolRef.current = null;
             updateTurn(turn, (item) => ({ ...item, activity: undefined }));
@@ -446,7 +479,15 @@ export function useAgentTurn(api: AgentApi, options: AgentTurnOptions): AgentTur
       setItems((previous) => [
         ...previous,
         { kind: "user", text: userText },
-        { kind: "assistant", turn, segments: [], suggestions: [], pending: true, tools: [] },
+        {
+          kind: "assistant",
+          turn,
+          segments: [],
+          suggestions: [],
+          pending: true,
+          tools: [],
+          toolRuns: [],
+        },
       ]);
       try {
         for await (const event of events) {
