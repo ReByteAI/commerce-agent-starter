@@ -1,5 +1,6 @@
 # Copyright 2026 Anthropic PBC
 # SPDX-License-Identifier: Apache-2.0
+# Modified by ReByteAI in 2026 to integrate the Rebyte managed Agent API.
 
 """The storefront half of a demo API: one app carrying the routes every vertical's
 storefront web app calls.
@@ -96,13 +97,28 @@ class StorefrontHost:
         self._env_hint = env_hint
         self._cart_extras = cart_extras or (lambda record: {})
 
+    def runtime_session_id(self, record: StorefrontRecord) -> str:
+        """Resolve the backend scope owned by a managed Agent Conversation.
+
+        The original in-process runtimes use the browser session id directly. A Rebyte
+        Agent derives its workspace id from the public Conversation id and exposes it
+        through ``runtime_scope``; reads and direct UI writes then address that same cart.
+        """
+        resolve = getattr(self.agent, "runtime_scope", None)
+        scope = resolve(record.session_id) if callable(resolve) else None
+        return scope if isinstance(scope, str) and scope else record.session_id
+
     def context(
-        self, record: StorefrontRecord, page: PageContext | None = None
+        self,
+        record: StorefrontRecord,
+        page: PageContext | None = None,
+        *,
+        runtime: bool = False,
     ) -> ShoppingSessionContext:
         """The agent's view of a request: identity from the record, the clock from the
         host (a deployment passes the user's timezone instead)."""
         return ShoppingSessionContext(
-            session_id=record.session_id,
+            session_id=self.runtime_session_id(record) if runtime else record.session_id,
             user_id=record.user_id,
             page=page or PageContext(),
             now=datetime.now(),
@@ -119,7 +135,7 @@ class StorefrontHost:
         )
 
     async def cart_payload(self, record: StorefrontRecord) -> dict[str, Any]:
-        cart = await self.backend.get_cart(self.context(record))
+        cart = await self.backend.get_cart(self.context(record, runtime=True))
         return serialize_cart(cart) | self._cart_extras(record)
 
     async def direct_add(
@@ -132,7 +148,7 @@ class StorefrontHost:
             backend=self.backend,
             config=self.agent.config,
             skills=self.agent.skills,
-            session=self.context(record),
+            session=self.context(record, runtime=True),
             state=record.state,
             memory=self.agent.memory,
         )
@@ -226,7 +242,7 @@ def build_storefront_host(
 
     @app.get("/api/orders")
     async def list_orders(record: CurrentSession) -> dict:
-        orders = await backend.get_orders(host.context(record), limit=20)
+        orders = await backend.get_orders(host.context(record, runtime=True), limit=20)
         return {"orders": [order.model_dump(mode="json") for order in orders]}
 
     install_memory_routes(
@@ -254,6 +270,7 @@ def build_storefront_host(
 
     @app.post("/api/reset")
     async def reset(request: ResetRequest, record: CurrentSession) -> dict:
+        runtime_session_id = host.runtime_session_id(record)
         if request.purge_memory or request.clear_memory:
             # clear() also advances the purge generation, so an extraction still running
             # for this user discards its result.
@@ -262,6 +279,11 @@ def build_storefront_host(
                 await memory_seeder.reseed(host.memory_store, record.user_id)
         host.sessions.reset(record)
         backend.reset_session(record.session_id)
+        if runtime_session_id != record.session_id:
+            backend.reset_session(runtime_session_id)
+        forget_session = getattr(agent, "forget_session", None)
+        if callable(forget_session):
+            await forget_session(record.session_id)
         fresh = host.sessions.start(record.user_id)
         return {"ok": True, "session_id": fresh.session_id}
 

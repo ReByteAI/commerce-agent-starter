@@ -1,5 +1,6 @@
 // Copyright 2026 Anthropic PBC
 // SPDX-License-Identifier: Apache-2.0
+// Modified by ReByteAI in 2026 to integrate the Rebyte managed Agent API.
 
 "use client";
 
@@ -38,11 +39,15 @@ export default function Chat({ chat, home, onCartUpdate }: { chat: AgentTurn; ho
         <GenerativeBlock
           block={segment.block}
           status={segment.status}
-          onAdd={async (product) => {
-            const cart = await addToCart(product.product_id);
-            if (cart) onCartUpdate(cart);
-            return cart !== null;
-          }}
+          onAdd={
+            chat.busy
+              ? undefined
+              : async (product) => {
+                  const cart = await addToCart(product.product_id);
+                  if (cart) onCartUpdate(cart);
+                  return cart !== null;
+                }
+          }
         />
       )}
     />

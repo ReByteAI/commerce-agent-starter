@@ -1,5 +1,6 @@
 # Copyright 2026 Anthropic PBC
 # SPDX-License-Identifier: Apache-2.0
+# Modified by ReByteAI in 2026 to integrate the Rebyte managed Agent API.
 
 """ACME retail example API: the mock retailer behind the shared storefront routes, the
 merchant router under /api/merchant, and the retail-only routes below.
@@ -12,6 +13,8 @@ user, so what a shopper asks the store to remember, or to forget, survives a res
 
 from __future__ import annotations
 
+import sys
+
 from fastapi.staticfiles import StaticFiles
 
 from commerce_common.memory import InMemoryMemoryStore, JsonFileMemoryStore
@@ -19,11 +22,11 @@ from demo_common import (
     REPO_ROOT,
     CartAddRequest,
     MemorySeeder,
+    RebyteShoppingAgent,
     build_storefront_host,
     load_demo_env,
 )
 from shopping_agent import ProductDetails
-from shopping_agent_runtime import ShoppingAgent
 
 from .agent_config import build_shopping_config
 from .merchant import create_merchant_router
@@ -31,9 +34,13 @@ from .mock_retail import DATA_DIR, MockRetail
 
 load_demo_env(DATA_DIR.parent)
 PRODUCT_IMAGES = DATA_DIR.parent / "storefront-web" / "public" / "products"
+MCP_SERVER_DIR = REPO_ROOT / "shopping-agent" / "managed-agents" / "storefront-mcp-server"
+if str(MCP_SERVER_DIR) not in sys.path:
+    sys.path.insert(0, str(MCP_SERVER_DIR))
+from storefront_mcp_server import mount_storefront_mcp  # noqa: E402
 
 backend = MockRetail()
-agent = ShoppingAgent(
+agent = RebyteShoppingAgent(
     backend=backend,
     skills_dir=REPO_ROOT / "shopping-agent" / "skills",
     config=build_shopping_config(),
@@ -60,6 +67,13 @@ host = build_storefront_host(
     product_detail=product_detail,
 )
 app = host.app
+mount_storefront_mcp(
+    app,
+    backend=backend,
+    memory_store=agent.memory.store,
+    config=agent.config,
+    executor_class=agent.executor_class,
+)
 app.include_router(create_merchant_router(backend, InMemoryMemoryStore()), prefix="/api/merchant")
 # The merchant portal shows the storefront's listing photos, so the API serves them to both apps.
 app.mount("/products", StaticFiles(directory=PRODUCT_IMAGES, check_dir=False), name="products")

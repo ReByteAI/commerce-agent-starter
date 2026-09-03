@@ -1,3 +1,5 @@
+<!-- Modified by ReByteAI in 2026 to integrate the Rebyte managed Agent API. -->
+
 # commerce-agents
 
 For agents working in this repo, commerce-builder plugin users included. The public
@@ -13,10 +15,10 @@ paths each, four vertical examples, and a Claude Code plugin.
 - `*/runtime-messages-api/`: `ShoppingAgent`, `MerchantAgent`, the merchant analysis delegate.
 - `*/runtime-agent-sdk/`: each agent as `ClaudeAgentOptions`, with a console.
 - `*/managed-agents/`: the manifest directory (with the derived `system.md`) and the role's MCP server.
-- `examples/demo_common/` and `examples/web-shared/`: what the verticals' APIs and web apps share; `examples/` is the npm workspace.
+- `examples/demo_common/` and `examples/web-shared/`: what the verticals' APIs and web apps share, including the server-side Rebyte Responses bridge; `examples/` is the npm workspace.
 - `examples/<vertical>/`: `api/`, `data/`, `storefront-web/`, `merchant-web/`; ports 8000-8003, 3000-3003, 3100-3103.
 - `plugins/commerce-builder/`: six skills, four commands; `.claude-plugin/marketplace.json` points at it.
-- `docs/`: `safety.md`, `backends.md`, `deployment.md`. `scripts/`: install, demo, smoke, screenshots, check, deploy, verify.
+- `docs/`: `safety.md`, `backends.md`, `deployment.md`. `scripts/`: Rebyte manifest rendering, install, demo, smoke, screenshots, check, deploy, verify.
 - `tests/`: the suites that span packages (both roles on all three paths); each package keeps its own `tests/`.
 
 `requirements.txt` installs the seven packages and their pinned dependencies (`requirements-dev.txt`

@@ -1,14 +1,18 @@
 # Copyright 2026 Anthropic PBC
 # SPDX-License-Identifier: Apache-2.0
+# Modified by ReByteAI in 2026 to integrate the Rebyte managed Agent API.
 
 import asyncio
 import os
 
 import pytest
 
+from commerce_common.streaming import AgentEvent
 from demo_common import host as host_module
 from demo_common import host_approval_default, load_demo_env, spawn_background
 from demo_common.host import _background_tasks
+from demo_common.sessions import SessionStore
+from shopping_agent import Product, ShoppingSessionContext, ShoppingSessionState
 
 
 @pytest.mark.parametrize(
@@ -90,3 +94,42 @@ async def test_spawn_background_holds_the_task_until_it_finishes():
             break
         await asyncio.sleep(0)
     assert not _background_tasks
+
+
+async def test_managed_interactive_state_is_saved_before_the_ui_event_is_yielded():
+    release = asyncio.Event()
+    store = SessionStore(ShoppingSessionState)
+    record = store.start("demo-user")
+
+    class ManagedAgent:
+        persist_before_yield = frozenset({"ui", "turn_complete"})
+
+        async def stream_turn(self, messages, session, state):
+            del messages, session
+            state.remember_products([Product(product_id="p-1", title="Tent", price=99)])
+            yield AgentEvent.ui("products", {"items": []})
+            await release.wait()
+            yield AgentEvent.turn_complete("end_turn", {}, 1, 0)
+
+        async def update_memory(self, messages, session):
+            del messages, session
+            return []
+
+    response = host_module.stream_turn(
+        ManagedAgent(),
+        store,
+        record,
+        ShoppingSessionContext(session_id=record.session_id, user_id=record.user_id),
+        env_hint=".env",
+    )
+    stream = response.body_iterator.__aiter__()
+
+    first_chunk = await anext(stream)
+
+    assert first_chunk.startswith("event: ui\n")
+    assert store.require(record.session_id).state.seen_products["p-1"].title == "Tent"
+
+    release.set()
+    assert (await anext(stream)).startswith("event: turn_complete\n")
+    with pytest.raises(StopAsyncIteration):
+        await anext(stream)

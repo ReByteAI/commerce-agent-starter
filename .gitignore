@@ -1,3 +1,4 @@
+# Modified by ReByteAI in 2026 to integrate the Rebyte managed Agent API.
 # Python
 __pycache__/
 *.py[cod]
@@ -16,6 +17,10 @@ htmlcov/
 .env
 .env.*
 !.env.example
+
+# Organization-specific Rebyte Agent configuration. Generate this from the
+# committed template with scripts/render_rebyte_agent.py.
+.rebyte/
 
 # Node / Next.js (vertical example frontends)
 node_modules/

@@ -1,5 +1,6 @@
 # Copyright 2026 Anthropic PBC
 # SPDX-License-Identifier: Apache-2.0
+# Modified by ReByteAI in 2026 to integrate the Rebyte managed Agent API.
 
 """Plumbing the two reference MCP servers share: one executor per connection, the
 registry's descriptions, the outcome-to-result mapping, and the loopback-only bind.
@@ -24,6 +25,7 @@ from .streaming import ToolOutcome
 logger = logging.getLogger(__name__)
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+REBYTE_WORKSPACE_HEADER = "X-Rebyte-Workspace-Id"
 
 
 def enforce_local_only_bind(host: str, *, server: str, unsafe_env_var: str) -> None:
@@ -64,8 +66,57 @@ class ConnectionExecutors:
         return result_text(await self.get(ctx).execute(name, arguments))
 
 
+def rebyte_workspace_scope(ctx: Context) -> str | None:
+    """Return the workspace scope stamped by Rebyte's trusted MCP gateway.
+
+    In-memory MCP transports have no HTTP request and therefore no scope. Deploy this
+    server only behind the gateway described by :func:`enforce_local_only_bind`; an
+    internet-facing caller could otherwise forge the header.
+    """
+    request = ctx.request_context.request
+    headers = getattr(request, "headers", None)
+    value = headers.get(REBYTE_WORKSPACE_HEADER) if headers is not None else None
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value or None
+
+
+class ScopedExecutors:
+    """One executor per trusted runtime scope, retained across MCP connections."""
+
+    def __init__(
+        self,
+        factory: Callable[[str], Any],
+        scope_resolver: Callable[[Context], str | None] = rebyte_workspace_scope,
+    ) -> None:
+        self._factory = factory
+        self._scope_resolver = scope_resolver
+        self._executors: dict[str, Any] = {}
+
+    def scope(self, ctx: Context) -> str:
+        scope = self._scope_resolver(ctx)
+        if scope is None:
+            raise ValueError(f"missing trusted {REBYTE_WORKSPACE_HEADER} header")
+        return scope
+
+    def get(self, scope: str) -> Any:
+        executor = self._executors.get(scope)
+        if executor is None:
+            executor = self._executors[scope] = self._factory(scope)
+        return executor
+
+    async def call(self, ctx: Context, name: str, arguments: dict[str, Any]) -> str:
+        scope = self.scope(ctx)
+        return result_text(await self.get(scope).execute(name, arguments))
+
+
 def registrar(
-    server: FastMCP, contracts: Mapping[str, Mapping[str, Any]], overrides: Mapping[str, str]
+    server: FastMCP,
+    contracts: Mapping[str, Mapping[str, Any]],
+    overrides: Mapping[str, str],
+    *,
+    meta: Mapping[str, Any] | None = None,
 ) -> Callable[[str], Callable[[Any], Any]]:
     """``register(name)`` decorates a handler as the MCP tool ``name`` under the registry's
     description (or the documented hosted-path override) and the registry's input schema,
@@ -78,7 +129,9 @@ def registrar(
         if name not in contracts:
             return lambda handler: handler
         decorate = server.tool(
-            name=name, description=overrides.get(name, str(contracts[name]["description"]))
+            name=name,
+            description=overrides.get(name, str(contracts[name]["description"])),
+            meta=dict(meta) if meta is not None else None,
         )
 
         def wrap(handler: Any) -> Any:

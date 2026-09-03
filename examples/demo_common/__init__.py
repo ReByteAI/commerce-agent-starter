@@ -1,5 +1,6 @@
 # Copyright 2026 Anthropic PBC
 # SPDX-License-Identifier: Apache-2.0
+# Modified by ReByteAI in 2026 to integrate the Rebyte managed Agent API.
 
 """Host code the four vertical examples share: the app and its middleware, the session
 store both roles use, the storefront routes, the merchant router, and (in
@@ -11,6 +12,7 @@ import; the fixture helpers are imported from their own modules."""
 from .host import REPO_ROOT, host_approval_default, load_demo_env, spawn_background
 from .memory import MemorySeeder
 from .merchant import MerchantIdentity, build_merchant_router
+from .rebyte_shopping import RebyteShoppingAgent
 from .sessions import (
     SESSION_HEADER,
     SessionConflictError,
@@ -27,6 +29,7 @@ __all__ = [
     "CartAddRequest",
     "MemorySeeder",
     "MerchantIdentity",
+    "RebyteShoppingAgent",
     "SessionConflictError",
     "SessionRecord",
     "SessionStore",

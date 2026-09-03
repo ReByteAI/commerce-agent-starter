@@ -1,5 +1,6 @@
 # Copyright 2026 Anthropic PBC
 # SPDX-License-Identifier: Apache-2.0
+# Modified by ReByteAI in 2026 to integrate the Rebyte managed Agent API.
 
 """Run a vertical example (API + web apps) with one command.
 
@@ -14,8 +15,8 @@ Boots uvicorn and the Next.js dev server(s), waits until they answer, prints the
 stops everything on Ctrl-C. Python packages and the examples/ npm workspace are installed on
 first run. Ports are preferences: this vertical's API already running on its port is reused;
 any other busy port moves the server to the next free one, and the web apps are pointed at
-wherever the API is. Chat credentials come from the environment, the vertical's .env, the
-repo-root .env, then the SDK's credential chain; browsing and /showcase need none.
+wherever the API is. The retail starter reads Rebyte credentials from the environment or
+the repo-root .env; the retained upstream verticals use their original Anthropic runtime.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -62,9 +64,23 @@ PYTHON_MODULES = (
     "fastapi",
     "uvicorn",
     "dotenv",
+    "openai",
 )
 
 GREEN, YELLOW, DIM, RESET = "\033[32m", "\033[33m", "\033[2m", "\033[0m"
+_GATEWAY_RUNTIME_ENV = frozenset(
+    {
+        "LANG",
+        "LC_ALL",
+        "PATH",
+        "PYTHONDONTWRITEBYTECODE",
+        "PYTHONPATH",
+        "PYTHONUNBUFFERED",
+        "TMPDIR",
+        "TZ",
+        "VIRTUAL_ENV",
+    }
+)
 
 
 def port_in_use(port: int) -> bool:
@@ -81,13 +97,13 @@ def find_free_port(preferred: int, span: int = 50) -> int:
         return sock.getsockname()[1]
 
 
-def env_file_has_key(path: Path) -> bool:
-    """True when the file sets a non-empty ANTHROPIC_API_KEY (a copied placeholder does not)."""
+def env_file_has_key(path: Path, expected_key: str) -> bool:
+    """True when ``path`` sets ``expected_key`` to a non-placeholder value."""
     if not path.exists():
         return False
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         key, _, value = line.strip().partition("=")
-        if key.strip() == "ANTHROPIC_API_KEY" and value.strip().strip("\"'"):
+        if key.strip() == expected_key and value.strip().strip("\"'"):
             return True
     return False
 
@@ -119,6 +135,27 @@ def wait_for(url: str, timeout_s: float, process: subprocess.Popen | None = None
                 return True
         except Exception:  # not up yet
             time.sleep(0.5)
+    return False
+
+
+def wait_for_gateway(port: int, timeout_s: float, process: subprocess.Popen) -> bool:
+    """Wait until the gateway itself answers its unauthenticated MCP readiness probe."""
+
+    url = f"http://127.0.0.1:{port}/mcp/"
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            return False
+        try:
+            with urllib.request.urlopen(url, timeout=2):
+                # The gateway must reject this probe, so any success is the wrong app.
+                return False
+        except urllib.error.HTTPError as error:
+            if error.code == 401:
+                return True
+        except (OSError, TimeoutError):
+            pass
+        time.sleep(0.25)
     return False
 
 
@@ -192,6 +229,28 @@ def start_web(app_dir: Path, port: int, api_port: int, prod: bool) -> subprocess
     return spawn([str(NEXT), "start" if prod else "dev", "--port", str(port)], app_dir, env)
 
 
+def start_mcp_gateway(api_port: int, port: int) -> subprocess.Popen:
+    # The gateway is an intentionally smaller trust boundary than the BFF. Build its
+    # environment from a runtime allowlist instead of inheriting organization credentials
+    # (or unrelated developer secrets) from a shell that sourced the repo-root .env.
+    env = {name: value for name in _GATEWAY_RUNTIME_ENV if (value := os.environ.get(name))}
+    if token := os.environ.get("REBYTE_MCP_GATEWAY_TOKEN"):
+        env["REBYTE_MCP_GATEWAY_TOKEN"] = token
+    env["COMMERCE_MCP_UPSTREAM_URL"] = f"http://127.0.0.1:{api_port}/mcp/"
+    command = [
+        sys.executable,
+        "-m",
+        "uvicorn",
+        "demo_common.mcp_gateway:create_app_from_env",
+        "--factory",
+        "--app-dir",
+        str(EXAMPLES_DIR),
+        "--port",
+        str(port),
+    ]
+    return spawn(command, REPO_ROOT, env)
+
+
 def reset_persisted_memory(vertical: str) -> str:
     files = VERTICALS[vertical].get("memory_files")
     if not files:
@@ -262,6 +321,7 @@ def main() -> int:
     api_port = args.api_port if args.api_port is not None else default_api_port
     web_port = default_api_port - 5000  # 8000 -> 3000; the portal adds 100
     run_api, run_web = not args.web_only, not args.api_only
+    mcp_gateway_port = 8100
 
     if args.fresh_memory:
         args.no_reuse = True
@@ -290,14 +350,37 @@ def main() -> int:
             print(f"{YELLOW}Port {port} is busy — starting the {label} on :{moved}.{RESET}")
             webs[index] = (label, app_dir, moved)
 
-    if run_api and not reuse_api and not args.federated and not os.environ.get("ANTHROPIC_API_KEY"):
-        env_file = EXAMPLES_DIR / args.vertical / ".env"
-        if not env_file_has_key(env_file) and not env_file_has_key(REPO_ROOT / ".env"):
-            print(
-                f"{YELLOW}No ANTHROPIC_API_KEY found; chat uses the SDK's credential chain if "
-                f"one is configured and otherwise returns an error event. To use a key:{RESET}\n"
-                "  cp .env.example .env   # at the repo root; fill in the key and restart"
-            )
+    if run_api and not reuse_api:
+        example_env = EXAMPLES_DIR / args.vertical / ".env"
+        root_env = REPO_ROOT / ".env"
+        if args.vertical == "retail":
+            missing = [
+                key
+                for key in (
+                    "REBYTE_API_KEY",
+                    "REBYTE_AGENT_ID",
+                    "REBYTE_MCP_GATEWAY_TOKEN",
+                )
+                if not os.environ.get(key)
+                and not env_file_has_key(example_env, key)
+                and not env_file_has_key(root_env, key)
+            ]
+            # Starting the MCP endpoint before Agent creation intentionally has no Agent id.
+            if args.api_only:
+                missing = [key for key in missing if key != "REBYTE_AGENT_ID"]
+            if missing:
+                print(
+                    f"{YELLOW}Missing {', '.join(missing)}; retail chat will return a setup "
+                    f"message until configured. See README.md.{RESET}"
+                )
+        elif not args.federated and not os.environ.get("ANTHROPIC_API_KEY"):
+            if not env_file_has_key(example_env, "ANTHROPIC_API_KEY") and not env_file_has_key(
+                root_env, "ANTHROPIC_API_KEY"
+            ):
+                print(
+                    f"{YELLOW}No ANTHROPIC_API_KEY found; chat uses the SDK's credential chain "
+                    f"if one is configured and otherwise returns an error event.{RESET}"
+                )
 
     processes: list[tuple[str, subprocess.Popen]] = []
     try:
@@ -308,6 +391,18 @@ def main() -> int:
             pipe_output(api, f"{args.vertical}-api")
             if not wait_for(f"http://localhost:{api_port}/api/health", 90, api):
                 raise RuntimeError(f"The API didn't come up on :{api_port} — see output above.")
+        if run_api and args.vertical == "retail":
+            if port_in_use(mcp_gateway_port):
+                raise RuntimeError(
+                    f"The retail MCP gateway needs :{mcp_gateway_port}, but that port is busy."
+                )
+            gateway = start_mcp_gateway(api_port, mcp_gateway_port)
+            processes.append(("MCP gateway", gateway))
+            pipe_output(gateway, "retail-mcp-gateway")
+            if not wait_for_gateway(mcp_gateway_port, 30, gateway):
+                raise RuntimeError(
+                    "The authenticated MCP gateway didn't come up on :8100 — see output above."
+                )
         if webs:
             ensure_web_deps(install=not args.no_install)
         for label, app_dir, port in webs:
@@ -323,6 +418,8 @@ def main() -> int:
             if app_dir.name == "storefront-web":
                 print(f"  {'showcase':<16} http://localhost:{port}/showcase")
         print(f"  {'api':<16} http://localhost:{api_port}/api/health")
+        if run_api and args.vertical == "retail":
+            print(f"  {'MCP gateway':<16} http://localhost:{mcp_gateway_port}/mcp/")
         if not processes:
             print(f"{DIM}Nothing new was started; everything was already running.{RESET}")
             return 0

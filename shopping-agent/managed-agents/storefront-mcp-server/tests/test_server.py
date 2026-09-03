@@ -1,15 +1,28 @@
 # Copyright 2026 Anthropic PBC
 # SPDX-License-Identifier: Apache-2.0
+# Modified by ReByteAI in 2026 to integrate the Rebyte managed Agent API.
 
 """The storefront server's own surface: the result mapping and per-connection provenance."""
 
 from __future__ import annotations
 
+import json
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from mcp.shared.memory import create_connected_server_and_client_session
-from storefront_mcp_server import build_server
+from storefront_mcp_server import (
+    NEVER_ASK_META,
+    PRESENTATION_TOOL_NAMES,
+    build_server,
+    mount_storefront_mcp,
+)
 
 from commerce_common.memory import InMemoryMemoryStore
 from commerce_common.testing import result_text
+from shopping_agent import ShoppingSessionContext, ShoppingSessionState
+from shopping_agent.executor import ShoppingToolExecutor
 from shopping_agent.fencing import STOREFRONT_FENCE
 from shopping_agent.gates import provenance_error
 
@@ -58,3 +71,164 @@ async def test_provenance_is_scoped_to_the_connection_but_the_cart_is_shared():
         assert "Updated quantity" in result_text(updated)
         removed = await second.call_tool("remove_from_cart", {"product_id": YOGA_MAT})
         assert "Removed" in result_text(removed)
+
+
+async def test_rebyte_mode_publishes_presentation_tools_and_never_ask_without_creating_state():
+    created: list[ShoppingToolExecutor] = []
+
+    class CountingExecutor(ShoppingToolExecutor):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            created.append(self)
+
+    rebyte_server = build_server(
+        memory_store=InMemoryMemoryStore(),
+        executor_class=CountingExecutor,
+        include_presentation_tools=True,
+    )
+    async with create_connected_server_and_client_session(rebyte_server) as client:
+        listed = await client.list_tools()
+        assert not created
+        assert {tool.name for tool in listed.tools} >= PRESENTATION_TOOL_NAMES
+        assert all(tool.meta == NEVER_ASK_META for tool in listed.tools)
+
+        await client.call_tool("search_products", {"query": "yoga mat"})
+        assert len(created) == 1
+
+
+async def test_rebyte_mode_returns_only_model_text_and_reuses_state_across_connections():
+    state = ShoppingSessionState()
+    rebyte_server = build_server(
+        memory_store=InMemoryMemoryStore(),
+        session=ShoppingSessionContext(session_id="local-runtime", user_id="demo-user"),
+        state=state,
+        include_presentation_tools=True,
+    )
+    async with create_connected_server_and_client_session(rebyte_server) as first:
+        search = await first.call_tool("search_products", {"query": "yoga mat"})
+        assert not search.isError
+        assert YOGA_MAT in result_text(search)
+        added = await first.call_tool("add_to_cart", {"product_id": YOGA_MAT, "quantity": 1})
+        assert result_text(added).startswith(f"Added {YOGA_MAT}")
+    assert YOGA_MAT in state.seen_products
+
+    async with create_connected_server_and_client_session(rebyte_server) as second:
+        presented = await second.call_tool(
+            "present_products",
+            {"title": "Yoga picks", "picks": [{"product_id": YOGA_MAT, "reason": "Grippy"}]},
+        )
+    assert not presented.isError
+    assert result_text(presented) == "Displayed to the customer."
+    wire_result = json.dumps(presented.model_dump(mode="json"))
+    assert '"events"' not in wire_result
+    assert '"payload"' not in wire_result
+
+
+def _rpc_data(response) -> dict:
+    response.raise_for_status()
+    messages = [
+        json.loads(line.removeprefix("data: "))
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    assert messages
+    return messages[-1]
+
+
+def _http_tool_call(
+    client: TestClient, scope: str | None, request_id: int, name: str, arguments: dict
+):
+    headers = {
+        "host": "localhost:8000",
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json",
+    }
+    if scope is not None:
+        headers["x-rebyte-workspace-id"] = scope
+    initialized = client.post(
+        "/mcp/",
+        headers=headers,
+        json={
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "storefront-test", "version": "1"},
+            },
+        },
+    )
+    _rpc_data(initialized)
+    session_headers = headers | {
+        "mcp-session-id": initialized.headers["mcp-session-id"],
+        "mcp-protocol-version": "2025-06-18",
+    }
+    ready = client.post(
+        "/mcp/",
+        headers=session_headers,
+        json={"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+    )
+    assert ready.status_code == 202
+    called = client.post(
+        "/mcp/",
+        headers=session_headers,
+        json={
+            "jsonrpc": "2.0",
+            "id": request_id + 1,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments},
+        },
+    )
+    return _rpc_data(called)["result"]
+
+
+def test_mount_uses_workspace_header_across_connections_and_isolates_other_scopes():
+    lifespan_events: list[str] = []
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        lifespan_events.append("started")
+        yield
+        lifespan_events.append("stopped")
+
+    app = FastAPI(lifespan=lifespan)
+    mount_storefront_mcp(app, memory_store=InMemoryMemoryStore(), scope="fallback")
+
+    with TestClient(app) as client:
+        assert lifespan_events == ["started"]
+        searched = _http_tool_call(
+            client, "workspace-a", 1, "search_products", {"query": "yoga mat"}
+        )
+        assert YOGA_MAT in result_text(searched)
+
+        # This is a fresh MCP session: provenance survives because the workspace scope matches.
+        shown = _http_tool_call(
+            client,
+            "workspace-a",
+            10,
+            "present_products",
+            {"picks": [{"product_id": YOGA_MAT}]},
+        )
+        assert result_text(shown) == "Displayed to the customer."
+        assert '"events"' not in json.dumps(shown)
+        assert '"payload"' not in json.dumps(shown)
+
+        # A different trusted workspace gets its own executor and provenance record.
+        unseen = _http_tool_call(
+            client,
+            "workspace-b",
+            20,
+            "present_products",
+            {"picks": [{"product_id": YOGA_MAT}]},
+        )
+        assert "catalog results" in result_text(unseen)
+        assert "Search first" in result_text(unseen)
+
+        # Discovery has no identity header, but execution must never use the fallback
+        # scope on HTTP. The missing-header failure is an MCP tool error.
+        missing_header = _http_tool_call(client, None, 30, "search_products", {"query": "yoga mat"})
+        assert missing_header["isError"] is True
+        assert "X-Rebyte-Workspace-Id" in result_text(missing_header)
+
+    assert lifespan_events == ["started", "stopped"]

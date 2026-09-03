@@ -1,5 +1,6 @@
 # Copyright 2026 Anthropic PBC
 # SPDX-License-Identifier: Apache-2.0
+# Modified by ReByteAI in 2026 to integrate the Rebyte managed Agent API.
 
 """Process-level plumbing both roles of a demo API share: credential loading, the app
 with its host and CORS middleware, background tasks, the loopback guard, and the SSE
@@ -57,10 +58,11 @@ class DemoStorefront(Protocol):
 
 
 def load_demo_env(example_root: Path) -> None:
-    """Load credentials before any agent is constructed. A variable already in the
-    environment wins; the example's own ``.env`` fills in the rest, then the repo-root
-    one; ``COMMERCE_DEMO_AUTH=sdk`` clears key variables instead so the Anthropic SDK's
-    own credential chain is used."""
+    """Load credentials before any agent is constructed.
+
+    Environment values win; the example's ``.env`` fills in the rest, then the repo-root
+    one. ``COMMERCE_DEMO_AUTH=sdk`` remains available to the retained Anthropic runtimes.
+    """
     if os.environ.get("COMMERCE_DEMO_AUTH", "").lower() == "sdk":
         os.environ.pop("ANTHROPIC_API_KEY", None)
         os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
@@ -88,11 +90,17 @@ def spawn_background(coro: Coroutine[Any, Any, object]) -> None:
 def _lifespan(on_startup: Sequence[Callable[[], Awaitable[None]]]):
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
+        has_anthropic_auth = bool(
+            os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+        )
+        has_rebyte_auth = bool(
+            os.environ.get("REBYTE_API_KEY") and os.environ.get("REBYTE_AGENT_ID")
+        )
+        if not has_anthropic_auth and not has_rebyte_auth:
             logger.info(
-                "No API key in the environment or .env files; the Anthropic SDK falls back "
-                "to its own credential chain. If chat returns auth errors, set "
-                "ANTHROPIC_API_KEY in a .env file (repo root or the example's directory)."
+                "No complete Agent API credentials are configured. The retail starter uses "
+                "REBYTE_API_KEY and REBYTE_AGENT_ID; retained upstream runtimes use "
+                "ANTHROPIC_API_KEY or the Anthropic SDK credential chain."
             )
         for step in on_startup:
             await step()
@@ -168,10 +176,17 @@ def stream_turn(
     and reported generically. Memory extraction runs after the response has streamed."""
 
     async def event_stream() -> AsyncIterator[str]:
+        persist_before_yield = frozenset(getattr(agent, "persist_before_yield", ()))
         try:
             async for event in agent.stream_turn(record.messages, session, record.state):
                 if event.type == "turn_complete" and event.data.get("results_cleared"):
                     record.stored_messages = 0  # earlier messages changed: rewrite the transcript
+                if event.type in persist_before_yield:
+                    # Managed runtimes can emit an interactive card before the stream ends.
+                    # Persist its provenance first so an immediate button request observes
+                    # the same state that produced the card. ``turn_complete`` is also gated
+                    # so the frontend cannot leave its busy state before the final write.
+                    sessions.save(record)
                 yield to_sse(event)
         except anthropic.AuthenticationError:
             logger.exception("chat turn failed: API authentication")
