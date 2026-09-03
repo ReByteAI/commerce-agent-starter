@@ -14,6 +14,9 @@ ACME React UI -> FastAPI -> OpenAI SDK -> Rebyte Responses API
 The supported starter path is [`examples/retail/`](examples/retail/). The other commerce
 agents and verticals remain as upstream reference code.
 
+**Hosted demo:** [commerce-agent-starter.cctools.workers.dev](https://commerce-agent-starter.cctools.workers.dev)
+(`@rebyte.ai` access).
+
 ## Run it
 
 You need Python 3.11+, Node 22, pnpm, `cloudflared` (or another public HTTPS endpoint),
@@ -84,6 +87,42 @@ Open <http://localhost:3000> and try:
 
 The API key stays in FastAPI. The browser receives only the demo's event stream.
 `.env` and the rendered `.rebyte/agent.toml` are gitignored.
+
+## Cloudflare deployment
+
+The hosted demo serves the exported Next.js storefront from a Cloudflare Worker and
+routes `/api/*` and `/mcp/*` to one Cloudflare Container running FastAPI. The browser is
+protected by Cloudflare Access. `/mcp/*` bypasses Access so the Rebyte Control Plane can
+reach it, but the Worker still requires `REBYTE_MCP_GATEWAY_TOKEN` before forwarding any
+MCP request.
+
+Before the first production deploy, create these Cloudflare Access applications for the
+Worker hostname:
+
+1. Protect `your-worker.workers.dev` with an Allow policy for the people who may use the
+   demo. This protects both the storefront and `/api/*`; the API has no separate end-user
+   login.
+2. Add the more-specific `your-worker.workers.dev/mcp/*` application with a Bypass policy
+   so Rebyte can connect. The Worker Bearer token remains required on this path.
+
+```bash
+pnpm install
+pnpm check
+pnpm exec wrangler secret put REBYTE_API_KEY
+pnpm exec wrangler secret put REBYTE_MCP_GATEWAY_TOKEN
+pnpm deploy
+```
+
+After deployment, an unauthenticated request to `/` must redirect to Cloudflare Access,
+and an unauthenticated request to `/mcp/` must return `401`.
+
+This reference deployment keeps browser sessions and Rebyte Conversation bindings in the
+Container's memory. A Container restart clears them; refresh the page to begin a new
+session. Back these stores with durable storage before using the pattern in production.
+
+Set `REBYTE_AGENT_ID` and the production host in [`wrangler.jsonc`](wrangler.jsonc).
+Never put either secret in a `NEXT_PUBLIC_*` variable; they belong only in Worker secrets
+and are passed from the Worker into the trusted Container.
 
 ## Starter files
 

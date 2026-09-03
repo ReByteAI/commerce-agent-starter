@@ -3,7 +3,7 @@
 
 name = "ACME Shopping Agent"
 description = "Shopping agent for the fictional ACME storefront"
-llm = "claude-sonnet-5"
+llm = "gpt-5.4-mini"
 max_steps = 32
 prompt_file = "../shopping-agent/managed-agents/shopping-agent/system.md"
 
