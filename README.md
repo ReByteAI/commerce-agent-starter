@@ -110,7 +110,7 @@ pnpm install
 pnpm check
 pnpm exec wrangler secret put REBYTE_API_KEY
 pnpm exec wrangler secret put REBYTE_MCP_GATEWAY_TOKEN
-pnpm deploy
+pnpm run deploy
 ```
 
 After deployment, an unauthenticated request to `/` must redirect to Cloudflare Access,
