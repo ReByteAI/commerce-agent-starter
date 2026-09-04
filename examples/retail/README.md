@@ -28,8 +28,10 @@ Use these three turns in one conversation:
 3. Add the family one to my cart, and tell me about returns.
 
 The expected path is search -> product cards -> comparison -> cart and policy tools. Rebyte
-keeps the managed Conversation; the MCP server keeps its cart and provenance under the
-trusted Rebyte Conversation ID. The separate workspace ID identifies the Agent Sandbox.
+executes the storefront MCP tools and keeps the managed Conversation. Product cards,
+comparisons, checkout, and suggestions are client tools: the BFF executes them, streams
+their UI events, and returns each result to that same Conversation. The MCP server and BFF
+share cart and provenance state under the trusted Rebyte Conversation ID.
 
 ## Files
 

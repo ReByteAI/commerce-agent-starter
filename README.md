@@ -9,6 +9,7 @@ Skills, and MCP orchestration.
 ```text
 ACME React UI -> FastAPI -> OpenAI SDK -> Rebyte Responses API
                                       -> managed Agent -> storefront MCP -> mock retailer
+                                                        -> client tool -> FastAPI -> UI
 ```
 
 The supported starter path is [`examples/retail/`](examples/retail/). The other commerce
@@ -128,9 +129,9 @@ and are passed from the Worker into the trusted Container.
 
 | Path | Responsibility |
 |---|---|
-| [`rebyte/agent.template.toml`](rebyte/agent.template.toml) | Managed Agent model, prompt, Skills, and custom MCP capability |
+| [`rebyte/agent.template.toml`](rebyte/agent.template.toml) | Managed Agent model, prompt, Skills, MCP capability, and seven client tools |
 | [`scripts/render_rebyte_agent.py`](scripts/render_rebyte_agent.py) | Inserts the Control Plane's MCP UUID into `.rebyte/agent.toml` |
-| [`examples/demo_common/rebyte_responses.py`](examples/demo_common/rebyte_responses.py) | Adapts the Rebyte Responses stream to the existing UI event protocol |
+| [`examples/demo_common/rebyte_responses.py`](examples/demo_common/rebyte_responses.py) | Adapts Responses events and returns client-tool outputs to the same Conversation |
 | [`examples/demo_common/mcp_gateway.py`](examples/demo_common/mcp_gateway.py) | Authenticated MCP-only gateway for the temporary public tunnel |
 | [`examples/retail/api/`](examples/retail/api/) | Server-side BFF, loopback MCP endpoint, and mock commerce backend |
 | [`examples/retail/storefront-web/`](examples/retail/storefront-web/) | Original ACME storefront and generative shopping UI |

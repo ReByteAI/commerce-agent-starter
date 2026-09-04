@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -57,17 +58,6 @@ DEMO_SESSION_ID = os.environ.get("STOREFRONT_MCP_SESSION_ID", "managed-agent-dem
 # descriptions point it at get_preferences instead.
 HOSTED_DESCRIPTION_OVERRIDES = INLINE_CONTEXT_DESCRIPTIONS
 NEVER_ASK_META = {"dust": {"stake": "never_ask"}}
-PRESENTATION_TOOL_NAMES = frozenset(
-    {
-        "present_products",
-        "present_comparison",
-        "present_plan",
-        "present_guide",
-        "present_order_status",
-        "checkout",
-        "present_suggestions",
-    }
-)
 
 SERVER_INSTRUCTIONS = (
     "Retailer commerce tools: catalog search, product details, cart, orders, policies, "
@@ -96,10 +86,7 @@ def build_server(
     memory_store: MemoryStore | None = None,
     config: ShoppingAgentConfig | None = None,
     *,
-    session: ShoppingSessionContext | None = None,
-    state: ShoppingSessionState | None = None,
-    scope: str | None = None,
-    include_presentation_tools: bool = False,
+    executor_for_scope: Callable[[str], ShoppingToolExecutor] | None = None,
     memory_write_filter: MemoryWriteFilter | None = None,
     executor_class: type[ShoppingToolExecutor] = ShoppingToolExecutor,
     host: str = DEFAULT_HOST,
@@ -108,13 +95,10 @@ def build_server(
 ) -> FastMCP:
     """The server over ``backend``; ``config`` carries the caps the executor enforces.
 
-    By default this preserves the Anthropic managed-agent path: backend tools only and
-    connection-local provenance. ``include_presentation_tools=True`` selects Rebyte mode:
-    the seven built-in presentation tools are remote MCP tools and the trusted
-    ``X-Rebyte-Conversation-Id`` header selects state across short MCP connections. The
-    separate workspace header still identifies the Agent Sandbox. Local transports fall
-    back to the injected ``scope`` or ``session`` id. HTTP tool calls fail closed when
-    the trusted Conversation header is absent; discovery calls create no executor.
+    The standalone server preserves the upstream connection-local executor. The Rebyte
+    starter injects ``executor_for_scope`` so short MCP connections for one Conversation
+    share provenance with the host application's client tools. Presentation tools are
+    never registered here.
     """
     enforce_local_only_bind(
         host, server="storefront", unsafe_env_var="STOREFRONT_MCP_UNSAFE_ALLOW_NO_AUTH"
@@ -126,12 +110,7 @@ def build_server(
         memory_store if memory_store is not None else _default_memory_store(),
         memory_write_filter,
     )
-    base_session = session or ShoppingSessionContext(
-        session_id=DEMO_SESSION_ID, user_id=DEMO_USER_ID
-    )
-    fallback_scope = (scope or base_session.session_id).strip()
-    if not fallback_scope:
-        raise ValueError("scope and session.session_id cannot both be empty")
+    base_session = ShoppingSessionContext(session_id=DEMO_SESSION_ID, user_id=DEMO_USER_ID)
 
     def new_executor(
         runtime_session: ShoppingSessionContext, runtime_state: ShoppingSessionState
@@ -146,35 +125,15 @@ def build_server(
             inline_context=True,
         )
 
-    if include_presentation_tools:
-        scoped_states = {fallback_scope: state} if state is not None else {}
-
-        def resolve_scope(ctx: Context) -> str | None:
-            request = ctx.request_context.request
-            if request is not None:
-                return rebyte_conversation_scope(ctx)
-            return fallback_scope
-
-        def executor_for(runtime_scope: str) -> ShoppingToolExecutor:
-            runtime_session = (
-                base_session
-                if runtime_scope == base_session.session_id
-                else base_session.model_copy(update={"session_id": runtime_scope})
-            )
-            runtime_state = scoped_states.setdefault(runtime_scope, ShoppingSessionState())
-            return new_executor(runtime_session, runtime_state)
-
+    if executor_for_scope is not None:
         executors = ScopedExecutors(
-            executor_for,
-            resolve_scope,
+            executor_for_scope,
+            rebyte_conversation_scope,
             required_header=REBYTE_CONVERSATION_HEADER,
+            cache=False,
         )
     else:
-        executors = ConnectionExecutors(
-            lambda: new_executor(
-                base_session, state if state is not None else ShoppingSessionState()
-            )
-        )
+        executors = ConnectionExecutors(lambda: new_executor(base_session, ShoppingSessionState()))
     server = FastMCP(
         name="storefront",
         instructions=SERVER_INSTRUCTIONS,
@@ -182,18 +141,11 @@ def build_server(
         port=port,
         streamable_http_path=streamable_http_path,
     )
-    contracts = contracts_by_name(build_tools(cfg, skill_names=[]))
-    if not include_presentation_tools:
-        contracts = {
-            name: contract
-            for name, contract in contracts.items()
-            if name not in PRESENTATION_TOOL_NAMES
-        }
     register = registrar(
         server,
-        contracts,
+        contracts_by_name(build_tools(cfg, skill_names=[])),
         HOSTED_DESCRIPTION_OVERRIDES,
-        meta=NEVER_ASK_META if include_presentation_tools else None,
+        meta=NEVER_ASK_META if executor_for_scope is not None else None,
     )
 
     async def execute_tool(ctx: Context, name: str, arguments: dict[str, Any]) -> str:
@@ -261,91 +213,6 @@ def build_server(
     async def get_fulfillment_options(product_ids: list[str], ctx: Context) -> str:
         return await execute_tool(ctx, "get_fulfillment_options", {"product_ids": product_ids})
 
-    @register("present_products")
-    async def present_products(
-        picks: list[dict[str, Any]],
-        ctx: Context,
-        title: str | None = None,
-        layout: str = "carousel",
-    ) -> str:
-        arguments: dict[str, Any] = {"picks": picks, "layout": layout}
-        if title is not None:
-            arguments["title"] = title
-        return await execute_tool(ctx, "present_products", arguments)
-
-    @register("present_comparison")
-    async def present_comparison(
-        entries: list[dict[str, Any]],
-        ctx: Context,
-        title: str | None = None,
-        dimensions: list[str] | None = None,
-        recommended_product_id: str | None = None,
-    ) -> str:
-        arguments: dict[str, Any] = {"entries": entries}
-        if title is not None:
-            arguments["title"] = title
-        if dimensions is not None:
-            arguments["dimensions"] = dimensions
-        if recommended_product_id is not None:
-            arguments["recommended_product_id"] = recommended_product_id
-        return await execute_tool(ctx, "present_comparison", arguments)
-
-    @register("present_plan")
-    async def present_plan(
-        title: str,
-        steps: list[dict[str, Any]],
-        ctx: Context,
-        intro: str | None = None,
-    ) -> str:
-        arguments: dict[str, Any] = {"title": title, "steps": steps}
-        if intro is not None:
-            arguments["intro"] = intro
-        return await execute_tool(ctx, "present_plan", arguments)
-
-    @register("present_guide")
-    async def present_guide(
-        title: str,
-        sections: list[dict[str, Any]],
-        ctx: Context,
-        related_product_ids: list[str] | None = None,
-        sources: list[str] | None = None,
-    ) -> str:
-        arguments: dict[str, Any] = {"title": title, "sections": sections}
-        if related_product_ids is not None:
-            arguments["related_product_ids"] = related_product_ids
-        if sources is not None:
-            arguments["sources"] = sources
-        return await execute_tool(ctx, "present_guide", arguments)
-
-    @register("present_order_status")
-    async def present_order_status(
-        order_id: str,
-        summary: str,
-        ctx: Context,
-        next_step: str | None = None,
-    ) -> str:
-        arguments: dict[str, Any] = {"order_id": order_id, "summary": summary}
-        if next_step is not None:
-            arguments["next_step"] = next_step
-        return await execute_tool(ctx, "present_order_status", arguments)
-
-    @register("checkout")
-    async def checkout(
-        ctx: Context,
-        note: str | None = None,
-        fulfillment_method: str | None = None,
-    ) -> str:
-        arguments: dict[str, Any] = {}
-        if note is not None:
-            arguments["note"] = note
-        if fulfillment_method is not None:
-            arguments["fulfillment_method"] = fulfillment_method
-        return await execute_tool(ctx, "checkout", arguments)
-
-    @register("present_suggestions")
-    async def present_suggestions(suggestions: list[str], ctx: Context) -> str:
-        return await execute_tool(ctx, "present_suggestions", {"suggestions": suggestions})
-
     return server
 
 
@@ -356,9 +223,7 @@ def mount_storefront_mcp(
     config: ShoppingAgentConfig | None = None,
     *,
     path: str = "/mcp",
-    session: ShoppingSessionContext | None = None,
-    state: ShoppingSessionState | None = None,
-    scope: str | None = None,
+    executor_for_scope: Callable[[str], ShoppingToolExecutor] | None = None,
     memory_write_filter: MemoryWriteFilter | None = None,
     executor_class: type[ShoppingToolExecutor] = ShoppingToolExecutor,
     host: str = DEFAULT_HOST,
@@ -378,10 +243,7 @@ def mount_storefront_mcp(
         backend,
         memory_store,
         config,
-        session=session,
-        state=state,
-        scope=scope,
-        include_presentation_tools=True,
+        executor_for_scope=executor_for_scope,
         memory_write_filter=memory_write_filter,
         executor_class=executor_class,
         host=host,

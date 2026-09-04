@@ -74,7 +74,7 @@ Create one adapter per API process and pass the host's session id on every turn:
 
 ```python
 adapter = RebyteResponsesAdapter.from_env(
-    presentation_hooks={"storefront/present_products": enrich_products}
+    client_tool_handler=execute_client_tool
 )
 async for event in adapter.stream_turn(record.session_id, request.message):
     yield to_sse(event)
@@ -82,9 +82,11 @@ async for event in adapter.stream_turn(record.session_id, request.message):
 
 Set `REBYTE_API_KEY`, `REBYTE_AGENT_ID`, and optionally `REBYTE_BASE_URL`. The first turn
 creates a Rebyte Conversation; later turns for that local session reuse it. A production
-session store can persist that id and restore it with `bind_conversation`. A presentation
-hook receives `(local_session_id, completed_call)` with decoded arguments and output, and
-returns validated, canonically enriched `AgentEvent.ui` events. MCP output remains plain,
-model-facing text. The retail BFF reconstructs host-only UI events by replaying safe reads
-and locally enriching presentation calls; it never repeats cart or memory writes. The
+session store can persist that id and restore it with `bind_conversation`.
+
+The Agent permanently declares seven presentation functions as client tools. When a
+Response contains a `function_call`, the adapter passes it to `client_tool_handler`, emits
+the handler's validated `AgentEvent.ui` events, and starts the next Response in the same
+Conversation with a standard `function_call_output`. It does not send tool definitions on
+each request. The 13 storefront tools remain MCP tools executed by Rebyte. The
 Conversation-derived scope is available through `runtime_scope(local_session_id)`.

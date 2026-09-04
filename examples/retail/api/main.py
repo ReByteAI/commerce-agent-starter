@@ -73,6 +73,7 @@ mount_storefront_mcp(
     memory_store=agent.memory.store,
     config=agent.config,
     executor_class=agent.executor_class,
+    executor_for_scope=agent.runtime_executor,
 )
 app.include_router(create_merchant_router(backend, InMemoryMemoryStore()), prefix="/api/merchant")
 # The merchant portal shows the storefront's listing photos, so the API serves them to both apps.

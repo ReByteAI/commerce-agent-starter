@@ -106,10 +106,13 @@ class ScopedExecutors:
         factory: Callable[[str], Any],
         scope_resolver: Callable[[Context], str | None] = rebyte_workspace_scope,
         required_header: str = REBYTE_WORKSPACE_HEADER,
+        *,
+        cache: bool = True,
     ) -> None:
         self._factory = factory
         self._scope_resolver = scope_resolver
         self._required_header = required_header
+        self._cache = cache
         self._executors: dict[str, Any] = {}
 
     def scope(self, ctx: Context) -> str:
@@ -119,6 +122,8 @@ class ScopedExecutors:
         return scope
 
     def get(self, scope: str) -> Any:
+        if not self._cache:
+            return self._factory(scope)
         executor = self._executors.get(scope)
         if executor is None:
             executor = self._executors[scope] = self._factory(scope)
