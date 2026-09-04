@@ -6,6 +6,7 @@
 import { useCallback, useRef } from "react";
 import type { AgentApi } from "../api";
 import type { AgentEvent, ChatItem } from "../protocol";
+import type { Session } from "../session";
 import { type AgentTurn, useAgentTurn } from "../turn";
 
 export interface ChangeRef {
@@ -44,8 +45,7 @@ function applyChangeUpdate(items: ChatItem[], change: ChangeRef): ChatItem[] {
 /** A change moving mid-turn refreshes the portal's widgets once the turn settles. */
 export function useMerchantChat<TChange extends ChangeRef>(
   api: AgentApi,
-  options: {
-    sessionId: string | null;
+  options: Pick<Session, "sessionId" | "renewSession"> & {
     unreachable: string;
     onPortalRefresh: () => void;
   },

@@ -111,9 +111,33 @@ export class AgentApi {
       headers: this.headers(true),
       body: JSON.stringify({ message }),
     });
-    if (!response.ok || !response.body) throw new Error(`chat request failed: ${response.status}`);
+    if (!response.ok) {
+      let detail = "";
+      try {
+        const body = (await response.json()) as { detail?: unknown };
+        if (typeof body.detail === "string") detail = body.detail;
+      } catch {
+        // A proxy or network edge may return a non-JSON error page.
+      }
+      throw new AgentApiError(response.status, detail);
+    }
+    if (!response.body) throw new Error("chat response had no body");
     yield* readEventStream(response.body);
   }
+}
+
+export class AgentApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly detail: string,
+  ) {
+    super(detail ? `chat request failed: ${status} ${detail}` : `chat request failed: ${status}`);
+    this.name = "AgentApiError";
+  }
+}
+
+export function isUnknownSessionError(error: unknown): error is AgentApiError {
+  return error instanceof AgentApiError && error.status === 401 && error.detail === "Unknown session";
 }
 
 async function* readEventStream(body: ReadableStream<Uint8Array>): AsyncGenerator<AgentEvent> {

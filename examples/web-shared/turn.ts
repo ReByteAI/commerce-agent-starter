@@ -11,7 +11,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { AgentApi } from "./api";
+import { isUnknownSessionError, type AgentApi } from "./api";
 import type {
   AgentEvent,
   AssistantChatItem,
@@ -77,6 +77,7 @@ interface Slot {
 
 export interface AgentTurnOptions {
   sessionId: string | null;
+  renewSession?: (expiredSessionId: string) => Promise<boolean>;
   unreachable: string;
   /** Runs before the transcript handles the event. */
   onEvent?: (event: AgentEvent, turn: number) => void;
@@ -105,13 +106,14 @@ export interface AgentTurn {
 }
 
 export function useAgentTurn(api: AgentApi, options: AgentTurnOptions): AgentTurn {
-  const { sessionId, unreachable, onEvent, onTurnEnd, pendingComponent } = options;
+  const { sessionId, renewSession, unreachable, onEvent, onTurnEnd, pendingComponent } = options;
   const [items, setItems] = useState<ChatItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [turnState, setTurnState] = useState({ turnCount: 0, completed: 0, streaming: false });
   const [trace, setTrace] = useState<TraceEntry[]>([]);
   const [memory, setMemory] = useState<MemoryFact[]>([]);
   const [newMemoryKeys, setNewMemoryKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const sendingRef = useRef(false);
   const memoryBaseline = useRef<Map<string, string> | null>(null);
   const turnRef = useRef(0);
   const slotsRef = useRef<Map<string, Slot>>(new Map());
@@ -159,6 +161,23 @@ export function useAgentTurn(api: AgentApi, options: AgentTurnOptions): AgentTur
       setNewMemoryKeys(new Set(changed));
     });
   }, [api]);
+
+  const resetForRenewedSession = useCallback((turn: number) => {
+    // The server rejected this turn before running it, so retain only the message being
+    // retried. Earlier transcript and trace entries belong to the expired conversation.
+    setItems((previous) => {
+      const assistantIndex = previous.findIndex(
+        (item) => item.kind === "assistant" && item.turn === turn,
+      );
+      if (assistantIndex < 0) return [];
+      const assistant = previous[assistantIndex];
+      const user = previous[assistantIndex - 1];
+      return user?.kind === "user" ? [user, assistant] : [assistant];
+    });
+    setTrace((previous) => previous.filter((entry) => entry.turn === turn));
+    memoryBaseline.current = null;
+    setNewMemoryKeys(new Set());
+  }, []);
 
   // The read before the first turn is the baseline for newMemoryKeys.
   useEffect(() => {
@@ -537,13 +556,36 @@ export function useAgentTurn(api: AgentApi, options: AgentTurnOptions): AgentTur
   const send = useCallback(
     async (text: string) => {
       const message = text.trim();
-      if (!message || busy || !sessionId) return;
+      if (!message || sendingRef.current || !sessionId) return;
+      sendingRef.current = true;
       setBusy(true);
-      await runTurn(message, api.chatStream(message));
-      setBusy(false);
-      window.setTimeout(() => readMemory(), MEMORY_REREAD_MS);
+      const turn = turnRef.current + 1;
+      const events = (async function* () {
+        try {
+          yield* api.chatStream(message);
+        } catch (error) {
+          if (
+            !isUnknownSessionError(error) ||
+            !renewSession ||
+            !(await renewSession(sessionId))
+          ) {
+            throw error;
+          }
+          resetForRenewedSession(turn);
+          // Only a request rejected with an exact `Unknown session` is replayed. A
+          // disconnected 200 response is never replayed because tools may have run.
+          yield* api.chatStream(message);
+        }
+      })();
+      try {
+        await runTurn(message, events);
+      } finally {
+        sendingRef.current = false;
+        setBusy(false);
+        window.setTimeout(() => readMemory(), MEMORY_REREAD_MS);
+      }
     },
-    [api, busy, sessionId, runTurn, readMemory],
+    [api, sessionId, runTurn, readMemory, renewSession, resetForRenewedSession],
   );
 
   return {
