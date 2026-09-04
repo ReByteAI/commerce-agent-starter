@@ -64,7 +64,7 @@ _ACTIVE_HOST_TURN: ContextVar[_HostTurn | None] = ContextVar(
 def _remember_rendered_products(state: ShoppingSessionState, event: AgentEvent) -> None:
     """Mirror host-enriched products into the browser session's gates.
 
-    The authoritative provenance remains in the MCP server's workspace-scoped executor.
+    The authoritative provenance remains in the MCP server's Conversation-scoped executor.
     The mirror exists so a product card's direct Add button passes through the same local
     ``ShoppingToolExecutor`` checks as the original demo.
     """
@@ -231,6 +231,6 @@ class RebyteShoppingAgent:
     async def update_memory(
         self, messages: list[dict[str, Any]], session: ShoppingSessionContext
     ) -> list[Any]:
-        # The managed Agent calls save_memory through the workspace-scoped MCP server.
+        # The managed Agent calls save_memory through the Conversation-scoped MCP server.
         del messages, session
         return []

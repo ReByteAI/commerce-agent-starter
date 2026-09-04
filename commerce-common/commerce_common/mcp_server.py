@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 REBYTE_WORKSPACE_HEADER = "X-Rebyte-Workspace-Id"
+REBYTE_CONVERSATION_HEADER = "X-Rebyte-Conversation-Id"
 
 
 def enforce_local_only_bind(host: str, *, server: str, unsafe_env_var: str) -> None:
@@ -66,20 +67,35 @@ class ConnectionExecutors:
         return result_text(await self.get(ctx).execute(name, arguments))
 
 
+def _rebyte_header_scope(ctx: Context, header: str) -> str | None:
+    """Return one runtime scope stamped by Rebyte's trusted MCP gateway."""
+    request = ctx.request_context.request
+    headers = getattr(request, "headers", None)
+    value = headers.get(header) if headers is not None else None
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value or None
+
+
 def rebyte_workspace_scope(ctx: Context) -> str | None:
-    """Return the workspace scope stamped by Rebyte's trusted MCP gateway.
+    """Return the Agent workspace stamped by Rebyte's trusted MCP gateway.
 
     In-memory MCP transports have no HTTP request and therefore no scope. Deploy this
     server only behind the gateway described by :func:`enforce_local_only_bind`; an
     internet-facing caller could otherwise forge the header.
     """
-    request = ctx.request_context.request
-    headers = getattr(request, "headers", None)
-    value = headers.get(REBYTE_WORKSPACE_HEADER) if headers is not None else None
-    if not isinstance(value, str):
-        return None
-    value = value.strip()
-    return value or None
+    return _rebyte_header_scope(ctx, REBYTE_WORKSPACE_HEADER)
+
+
+def rebyte_conversation_scope(ctx: Context) -> str | None:
+    """Return the Conversation stamped by Rebyte's trusted MCP gateway.
+
+    Use this scope for mutable state that must not leak between Conversations sharing
+    one Agent workspace. The workspace header remains available separately through
+    :func:`rebyte_workspace_scope` for Agent- and Sandbox-level ownership.
+    """
+    return _rebyte_header_scope(ctx, REBYTE_CONVERSATION_HEADER)
 
 
 class ScopedExecutors:
@@ -89,15 +105,17 @@ class ScopedExecutors:
         self,
         factory: Callable[[str], Any],
         scope_resolver: Callable[[Context], str | None] = rebyte_workspace_scope,
+        required_header: str = REBYTE_WORKSPACE_HEADER,
     ) -> None:
         self._factory = factory
         self._scope_resolver = scope_resolver
+        self._required_header = required_header
         self._executors: dict[str, Any] = {}
 
     def scope(self, ctx: Context) -> str:
         scope = self._scope_resolver(ctx)
         if scope is None:
-            raise ValueError(f"missing trusted {REBYTE_WORKSPACE_HEADER} header")
+            raise ValueError(f"missing trusted {self._required_header} header")
         return scope
 
     def get(self, scope: str) -> Any:

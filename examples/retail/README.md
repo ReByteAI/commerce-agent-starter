@@ -28,8 +28,8 @@ Use these three turns in one conversation:
 3. Add the family one to my cart, and tell me about returns.
 
 The expected path is search -> product cards -> comparison -> cart and policy tools. Rebyte
-keeps the managed conversation; the MCP server keeps its cart and provenance under the
-trusted Rebyte workspace ID.
+keeps the managed Conversation; the MCP server keeps its cart and provenance under the
+trusted Rebyte Conversation ID. The separate workspace ID identifies the Agent Sandbox.
 
 ## Files
 

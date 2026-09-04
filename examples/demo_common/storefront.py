@@ -101,8 +101,9 @@ class StorefrontHost:
         """Resolve the backend scope owned by a managed Agent Conversation.
 
         The original in-process runtimes use the browser session id directly. A Rebyte
-        Agent derives its workspace id from the public Conversation id and exposes it
-        through ``runtime_scope``; reads and direct UI writes then address that same cart.
+        Agent derives the runtime Conversation UUID from the public Conversation id and
+        exposes it through ``runtime_scope``; reads and direct UI writes then address
+        that same cart.
         """
         resolve = getattr(self.agent, "runtime_scope", None)
         scope = resolve(record.session_id) if callable(resolve) else None

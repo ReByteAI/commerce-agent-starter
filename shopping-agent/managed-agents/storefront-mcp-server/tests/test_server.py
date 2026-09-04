@@ -136,15 +136,22 @@ def _rpc_data(response) -> dict:
 
 
 def _http_tool_call(
-    client: TestClient, scope: str | None, request_id: int, name: str, arguments: dict
+    client: TestClient,
+    conversation_scope: str | None,
+    request_id: int,
+    name: str,
+    arguments: dict,
+    *,
+    workspace_scope: str = "agent-workspace",
 ):
     headers = {
         "host": "localhost:8000",
         "accept": "application/json, text/event-stream",
         "content-type": "application/json",
     }
-    if scope is not None:
-        headers["x-rebyte-workspace-id"] = scope
+    headers["x-rebyte-workspace-id"] = workspace_scope
+    if conversation_scope is not None:
+        headers["x-rebyte-conversation-id"] = conversation_scope
     initialized = client.post(
         "/mcp/",
         headers=headers,
@@ -183,7 +190,7 @@ def _http_tool_call(
     return _rpc_data(called)["result"]
 
 
-def test_mount_uses_workspace_header_across_connections_and_isolates_other_scopes():
+def test_mount_uses_conversation_header_across_connections_and_isolates_conversations():
     lifespan_events: list[str] = []
 
     @asynccontextmanager
@@ -198,14 +205,14 @@ def test_mount_uses_workspace_header_across_connections_and_isolates_other_scope
     with TestClient(app) as client:
         assert lifespan_events == ["started"]
         searched = _http_tool_call(
-            client, "workspace-a", 1, "search_products", {"query": "yoga mat"}
+            client, "conversation-a", 1, "search_products", {"query": "yoga mat"}
         )
         assert YOGA_MAT in result_text(searched)
 
-        # This is a fresh MCP session: provenance survives because the workspace scope matches.
+        # This is a fresh MCP session: provenance survives because the Conversation matches.
         shown = _http_tool_call(
             client,
-            "workspace-a",
+            "conversation-a",
             10,
             "present_products",
             {"picks": [{"product_id": YOGA_MAT}]},
@@ -214,10 +221,11 @@ def test_mount_uses_workspace_header_across_connections_and_isolates_other_scope
         assert '"events"' not in json.dumps(shown)
         assert '"payload"' not in json.dumps(shown)
 
-        # A different trusted workspace gets its own executor and provenance record.
+        # A different Conversation in the same Agent workspace gets its own executor and
+        # provenance record.
         unseen = _http_tool_call(
             client,
-            "workspace-b",
+            "conversation-b",
             20,
             "present_products",
             {"picks": [{"product_id": YOGA_MAT}]},
@@ -225,10 +233,10 @@ def test_mount_uses_workspace_header_across_connections_and_isolates_other_scope
         assert "catalog results" in result_text(unseen)
         assert "Search first" in result_text(unseen)
 
-        # Discovery has no identity header, but execution must never use the fallback
-        # scope on HTTP. The missing-header failure is an MCP tool error.
+        # A workspace header alone must never select per-Conversation state on HTTP. The
+        # missing Conversation-header failure is an MCP tool error.
         missing_header = _http_tool_call(client, None, 30, "search_products", {"query": "yoga mat"})
         assert missing_header["isError"] is True
-        assert "X-Rebyte-Workspace-Id" in result_text(missing_header)
+        assert "X-Rebyte-Conversation-Id" in result_text(missing_header)
 
     assert lifespan_events == ["started", "stopped"]

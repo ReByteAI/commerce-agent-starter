@@ -71,6 +71,7 @@ def test_gateway_exposes_only_authenticated_mcp(monkeypatch):
             headers={
                 "Authorization": f"Bearer {TOKEN}",
                 "X-Rebyte-Workspace-Id": "workspace-1",
+                "X-Rebyte-Conversation-Id": "conversation-1",
                 "Accept": "application/json, text/event-stream",
             },
             json={"jsonrpc": "2.0", "id": 1, "method": "initialize"},
@@ -80,6 +81,7 @@ def test_gateway_exposes_only_authenticated_mcp(monkeypatch):
     assert proxied.headers["mcp-session-id"] == "session-1"
     assert "authorization" not in FakeClient.last_request.headers
     assert FakeClient.last_request.headers["x-rebyte-workspace-id"] == "workspace-1"
+    assert FakeClient.last_request.headers["x-rebyte-conversation-id"] == "conversation-1"
     assert FakeClient.last_request.url == httpx.URL("http://127.0.0.1:8000/mcp/")
     assert FakeClient.closed
 

@@ -119,7 +119,7 @@ _CONVERSATION_ID = re.compile(
 
 
 def _runtime_scope_from_conversation(conversation_id: str) -> str:
-    """Return the workspace UUID encoded by a public Rebyte Conversation id."""
+    """Return the runtime Conversation UUID encoded by its public Rebyte id."""
 
     matched = _CONVERSATION_ID.fullmatch(conversation_id)
     if matched is None:
@@ -285,7 +285,7 @@ class RebyteResponsesAdapter:
         return self._conversations.get(local_session_id)
 
     def runtime_scope(self, local_session_id: str) -> str | None:
-        """Return the workspace UUID encoded by this session's Conversation id."""
+        """Return the Conversation UUID used for this session's retail state."""
 
         conversation_id = self._conversations.get(local_session_id)
         return (

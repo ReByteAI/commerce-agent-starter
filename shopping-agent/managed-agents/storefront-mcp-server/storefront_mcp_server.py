@@ -3,7 +3,7 @@
 # Modified by ReByteAI in 2026 to integrate the Rebyte managed Agent API.
 
 """The MCP server a hosted shopping agent connects to: the storefront tools over a
-``StorefrontBackend``, one executor (and so one provenance record) per Rebyte workspace.
+``StorefrontBackend``, one executor (and so one provenance record) per Rebyte Conversation.
 The default backend is the retail example's mock storefront::
 
     python storefront_mcp_server.py        # streamable HTTP on 127.0.0.1:8200/mcp
@@ -25,10 +25,11 @@ from mcp.server.fastmcp import Context, FastMCP
 
 from commerce_common.execution import contracts_by_name
 from commerce_common.mcp_server import (
+    REBYTE_CONVERSATION_HEADER,
     ConnectionExecutors,
     ScopedExecutors,
     enforce_local_only_bind,
-    rebyte_workspace_scope,
+    rebyte_conversation_scope,
     registrar,
     run,
 )
@@ -110,9 +111,10 @@ def build_server(
     By default this preserves the Anthropic managed-agent path: backend tools only and
     connection-local provenance. ``include_presentation_tools=True`` selects Rebyte mode:
     the seven built-in presentation tools are remote MCP tools and the trusted
-    ``X-Rebyte-Workspace-Id`` header selects state across short MCP connections. Local
-    transports fall back to the injected ``scope`` or ``session`` id. HTTP tool calls
-    fail closed when the trusted header is absent; discovery calls create no executor.
+    ``X-Rebyte-Conversation-Id`` header selects state across short MCP connections. The
+    separate workspace header still identifies the Agent Sandbox. Local transports fall
+    back to the injected ``scope`` or ``session`` id. HTTP tool calls fail closed when
+    the trusted Conversation header is absent; discovery calls create no executor.
     """
     enforce_local_only_bind(
         host, server="storefront", unsafe_env_var="STOREFRONT_MCP_UNSAFE_ALLOW_NO_AUTH"
@@ -150,7 +152,7 @@ def build_server(
         def resolve_scope(ctx: Context) -> str | None:
             request = ctx.request_context.request
             if request is not None:
-                return rebyte_workspace_scope(ctx)
+                return rebyte_conversation_scope(ctx)
             return fallback_scope
 
         def executor_for(runtime_scope: str) -> ShoppingToolExecutor:
@@ -162,7 +164,11 @@ def build_server(
             runtime_state = scoped_states.setdefault(runtime_scope, ShoppingSessionState())
             return new_executor(runtime_session, runtime_state)
 
-        executors = ScopedExecutors(executor_for, resolve_scope)
+        executors = ScopedExecutors(
+            executor_for,
+            resolve_scope,
+            required_header=REBYTE_CONVERSATION_HEADER,
+        )
     else:
         executors = ConnectionExecutors(
             lambda: new_executor(

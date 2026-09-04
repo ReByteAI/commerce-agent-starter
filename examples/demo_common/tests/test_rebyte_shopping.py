@@ -22,7 +22,7 @@ YOGA_MAT = "AR-1301"
 
 
 class FakeResponses:
-    def __init__(self, events: list[AgentEvent], scope: str = "workspace-1") -> None:
+    def __init__(self, events: list[AgentEvent], scope: str = "conversation-1") -> None:
         self.events = events
         self.scope = scope
         self.calls: list[tuple[str, str]] = []
@@ -126,7 +126,7 @@ async def test_managed_agent_forwards_latest_turn_and_mirrors_rendered_products(
     assert [event.type for event in events] == ["ui", "turn_complete"]
     assert fake.calls == [("local-1", "show me a tent")]
     assert state.seen_products["tent-1"].title == "Family Tent"
-    assert agent.runtime_scope("local-1") == "workspace-1"
+    assert agent.runtime_scope("local-1") == "conversation-1"
 
     await agent.forget_session("local-1")
     assert fake.forgotten == ["local-1"]
