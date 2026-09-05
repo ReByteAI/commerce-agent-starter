@@ -1,0 +1,19 @@
+{
+  "name": "commerce-agent-starter-cloudflare",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.15.1",
+  "scripts": {
+    "build:web": "npm --prefix examples ci && npm --prefix examples run build --workspace=acme-retail-storefront-web",
+    "typecheck": "tsc --noEmit --target ES2022 --module ESNext --moduleResolution Bundler --lib ES2022 --types @cloudflare/workers-types --skipLibCheck worker/index.ts",
+    "check": "pnpm typecheck && pnpm build:web",
+    "dev": "pnpm build:web && wrangler dev",
+    "deploy": "pnpm check && wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/containers": "0.3.7",
+    "@cloudflare/workers-types": "5.20260903.1",
+    "typescript": "5.9.2",
+    "wrangler": "4.129.0"
+  }
+}

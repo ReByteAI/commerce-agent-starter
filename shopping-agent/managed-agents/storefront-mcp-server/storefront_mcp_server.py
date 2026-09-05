@@ -16,8 +16,10 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import Any, Protocol
 
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from commerce_common.execution import contracts_by_name
 from commerce_common.mcp_server import ConnectionExecutors, enforce_local_only_bind, registrar, run
@@ -53,6 +55,10 @@ SERVER_INSTRUCTIONS = (
 )
 
 
+class ToolCaller(Protocol):
+    async def call(self, ctx: Context, name: str, arguments: dict[str, Any]) -> Any: ...
+
+
 def _default_backend() -> StorefrontBackend:
     examples_dir = REPO_ROOT / "examples"
     if str(examples_dir) not in sys.path:
@@ -72,10 +78,13 @@ def build_server(
     memory_store: MemoryStore | None = None,
     config: ShoppingAgentConfig | None = None,
     *,
+    tool_caller: ToolCaller | None = None,
     memory_write_filter: MemoryWriteFilter | None = None,
     executor_class: type[ShoppingToolExecutor] = ShoppingToolExecutor,
     host: str = DEFAULT_HOST,
     port: int = DEFAULT_PORT,
+    streamable_http_path: str = "/mcp",
+    transport_security: TransportSecuritySettings | None = None,
 ) -> FastMCP:
     """The server over ``backend``; ``config`` carries the caps the executor enforces."""
     enforce_local_only_bind(
@@ -89,7 +98,7 @@ def build_server(
         memory_write_filter,
     )
     session = ShoppingSessionContext(session_id=DEMO_SESSION_ID, user_id=DEMO_USER_ID)
-    executors = ConnectionExecutors(
+    executors: ToolCaller = tool_caller or ConnectionExecutors(
         lambda: executor_class(
             backend=backend,
             config=cfg,
@@ -100,7 +109,14 @@ def build_server(
             inline_context=True,
         )
     )
-    server = FastMCP(name="storefront", instructions=SERVER_INSTRUCTIONS, host=host, port=port)
+    server = FastMCP(
+        name="storefront",
+        instructions=SERVER_INSTRUCTIONS,
+        host=host,
+        port=port,
+        streamable_http_path=streamable_http_path,
+        transport_security=transport_security,
+    )
     register = registrar(
         server, contracts_by_name(build_tools(cfg, skill_names=[])), HOSTED_DESCRIPTION_OVERRIDES
     )

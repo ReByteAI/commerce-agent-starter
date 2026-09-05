@@ -29,6 +29,13 @@ hosted agent  ──MCP (streamable HTTP)──►  storefront_mcp_server.py  �
 Presentation tools are custom tools in the manifest, executed by the host application, so
 none are served here; there is no `load_skill`, because the platform loads skills itself.
 
+The Rebyte retail example mounts this server at `/mcp/` in the FastAPI host. Rebyte stamps
+each call with `X-Rebyte-Conversation-Id`; the host maps that UUID to the active browser
+session's executor, so MCP calls and presentation tools share the original provenance
+state. The standalone command below keeps the upstream
+connection-scoped behavior. The header is an identity only behind connector authentication;
+do not expose this reference server as an unauthenticated public endpoint.
+
 ## Run
 
 ```bash

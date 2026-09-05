@@ -26,6 +26,7 @@ examples/*/*-web/CLAUDE.md
 out/
 *.tsbuildinfo
 npm-debug.log*
+.wrangler/
 
 
 # Example runtime state. The memory files hold whatever a local demo

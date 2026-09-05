@@ -11,7 +11,43 @@ SDK, and Managed Agents; four runnable verticals show both over the same librari
 > the cart for the host to complete, and every merchant write is staged until a person
 > approves it. Business rules, authorization, and compliance are the deployment's.
 
-## Quick start: run the demos
+## Run the Rebyte retail example
+
+The Agent must exist before the app starts serving shoppers. Its definition is
+[`rebyte/agent.toml`](rebyte/agent.toml): the upstream system prompt,
+five skills, storefront MCP connector, and seven host-executed presentation tools.
+
+1. Start the retail API and expose its `/mcp/` endpoint through an HTTPS URL. Add the
+   public hostname to `DEMO_ALLOWED_HOSTS` before starting FastAPI (for example,
+   `export DEMO_ALLOWED_HOSTS=your-host.example`). A temporary tunnel is sufficient for
+   local testing; a public deployment must authenticate the connector before trusting its
+   conversation header.
+2. Install the Rebyte CLI, set that endpoint URL, and create the Agent directly from its
+   static definition:
+
+```bash
+pnpm add --global https://github.com/ReByteAI/rebyte-agent-toolkit/releases/latest/download/rebyte-cli.tgz
+export STOREFRONT_MCP_URL=https://your-host.example/mcp/
+rebyte agent create -f rebyte/agent.toml
+```
+
+3. Copy `.env.example` to `.env`, set `REBYTE_API_KEY` and the returned
+   `REBYTE_AGENT_ID`, then run the unchanged storefront UI:
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+(cd examples && npm ci)
+python scripts/run_demo.py retail
+```
+
+The API key stays in FastAPI. On the first chat turn, the adapter creates one Rebyte
+Session for the unchanged browser session and then keeps using its `conv_...` Conversation
+id. Rebyte owns the conversation history; the original host still owns presentation-tool
+execution and UI state. Runtime requests only call the pre-created Agent; they do not
+create an Agent or Sandbox or install skills.
+
+## Run the original Anthropic paths
 
 Python 3.11+ and Node 22. Clone, install, add a key, run a vertical:
 
@@ -21,7 +57,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt       # the seven packages and their pinned dependencies
 cp .env.example .env                  # add ANTHROPIC_API_KEY
 (cd examples && npm ci)               # the eight web apps share one workspace
-python scripts/run_demo.py retail     # API :8000 + storefront :3000
+python scripts/run_demo.py travel     # API :8001 + storefront :3001
 ```
 
 `--merchant` starts the portal instead of the storefront and `--all` starts both. The

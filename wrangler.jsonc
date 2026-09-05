@@ -1,0 +1,41 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "commerce-agent-starter",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-09-03",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": true,
+  "assets": {
+    "directory": "./examples/retail/storefront-web/out",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": true
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "COMMERCE_CONTAINER",
+        "class_name": "CommerceContainer"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["CommerceContainer"]
+    }
+  ],
+  "containers": [
+    {
+      "class_name": "CommerceContainer",
+      "image": "./Dockerfile",
+      "max_instances": 2
+    }
+  ],
+  "vars": {
+    "REBYTE_AGENT_ID": "4c44ac7d-ba4e-4da9-8cbe-9265c89fb680",
+    "REBYTE_BASE_URL": "https://api.rebyte.ai",
+    "DEMO_ALLOWED_HOSTS": "commerce-agent-starter.cctools.workers.dev"
+  }
+}

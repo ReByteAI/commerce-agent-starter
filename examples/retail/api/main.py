@@ -23,17 +23,18 @@ from demo_common import (
     load_demo_env,
 )
 from shopping_agent import ProductDetails
-from shopping_agent_runtime import ShoppingAgent
 
 from .agent_config import build_shopping_config
 from .merchant import create_merchant_router
 from .mock_retail import DATA_DIR, MockRetail
+from .rebyte_agent import RebyteShoppingAgent
+from .rebyte_mcp import mount_rebyte_storefront_mcp
 
 load_demo_env(DATA_DIR.parent)
 PRODUCT_IMAGES = DATA_DIR.parent / "storefront-web" / "public" / "products"
 
 backend = MockRetail()
-agent = ShoppingAgent(
+agent = RebyteShoppingAgent(
     backend=backend,
     skills_dir=REPO_ROOT / "shopping-agent" / "skills",
     config=build_shopping_config(),
@@ -60,6 +61,11 @@ host = build_storefront_host(
     product_detail=product_detail,
 )
 app = host.app
+mount_rebyte_storefront_mcp(
+    app,
+    agent=agent,
+    backend=backend,
+)
 app.include_router(create_merchant_router(backend, InMemoryMemoryStore()), prefix="/api/merchant")
 # The merchant portal shows the storefront's listing photos, so the API serves them to both apps.
 app.mount("/products", StaticFiles(directory=PRODUCT_IMAGES, check_dir=False), name="products")
