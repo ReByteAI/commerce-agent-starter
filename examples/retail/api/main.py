@@ -1,5 +1,6 @@
 # Copyright 2026 Anthropic PBC
 # SPDX-License-Identifier: Apache-2.0
+# ReByteAI integration: the retail storefront uses the Rebyte Agent API.
 
 """ACME retail example API: the mock retailer behind the shared storefront routes, the
 merchant router under /api/merchant, and the retail-only routes below.
@@ -23,17 +24,17 @@ from demo_common import (
     load_demo_env,
 )
 from shopping_agent import ProductDetails
-from shopping_agent_runtime import ShoppingAgent
 
 from .agent_config import build_shopping_config
 from .merchant import create_merchant_router
 from .mock_retail import DATA_DIR, MockRetail
+from .rebyte_agent import RebyteShoppingAgent
 
 load_demo_env(DATA_DIR.parent)
 PRODUCT_IMAGES = DATA_DIR.parent / "storefront-web" / "public" / "products"
 
 backend = MockRetail()
-agent = ShoppingAgent(
+agent = RebyteShoppingAgent(
     backend=backend,
     skills_dir=REPO_ROOT / "shopping-agent" / "skills",
     config=build_shopping_config(),

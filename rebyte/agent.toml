@@ -1,0 +1,617 @@
+# Copyright 2026 ReByteAI
+# SPDX-License-Identifier: Apache-2.0
+
+name = "ACME Shopping Agent"
+description = "Shopping agent for the fictional ACME store: search and discovery, multi-item planning, purchase research, cart and checkout, customer care, and personalization, with the UI rendered by the host application from presentation tool calls."
+llm = "deepseek-v4-pro"
+prompt_file = "../shopping-agent/managed-agents/shopping-agent/system.md"
+capabilities = [ "skills" ]
+
+[[skills]]
+repo = "ReByteAI/commerce-agent-starter"
+path = "shopping-agent/skills/search-discovery"
+
+[[skills]]
+repo = "ReByteAI/commerce-agent-starter"
+path = "shopping-agent/skills/planning-goals"
+
+[[skills]]
+repo = "ReByteAI/commerce-agent-starter"
+path = "shopping-agent/skills/purchase-research"
+
+[[skills]]
+repo = "ReByteAI/commerce-agent-starter"
+path = "shopping-agent/skills/memory-personalization"
+
+[[skills]]
+repo = "ReByteAI/commerce-agent-starter"
+path = "shopping-agent/skills/customer-care"
+
+[[client_tools]]
+type = "function"
+name = "search_products"
+description = "Search the catalog; returns products with id, title, brand, price, rating, and availability; a product with options shows its lowest in-stock price and its options. Use a specific query and put stated constraints in filters. Run one search per distinct item a request names."
+strict = false
+
+[client_tools.parameters]
+type = "object"
+required = [ "query" ]
+additionalProperties = false
+
+[client_tools.parameters.properties.status]
+type = "string"
+maxLength = 60
+description = "A few plain words the customer sees while this runs, saying what you are doing for them; no tool or system names."
+
+[client_tools.parameters.properties.query]
+type = "string"
+description = "What to look for, in the catalog's vocabulary."
+
+[client_tools.parameters.properties.filters]
+type = "object"
+description = "Constraints the customer stated; leave guesses in the query."
+additionalProperties = false
+
+[client_tools.parameters.properties.filters.properties.category]
+type = "string"
+description = "Catalog category name."
+
+[client_tools.parameters.properties.filters.properties.min_price]
+type = "number"
+description = "Lowest acceptable price."
+
+[client_tools.parameters.properties.filters.properties.max_price]
+type = "number"
+description = "Price ceiling the customer stated."
+
+[client_tools.parameters.properties.filters.properties.min_rating]
+type = "number"
+description = "Lowest acceptable average rating."
+
+[client_tools.parameters.properties.filters.properties.attributes]
+type = "object"
+description = "Attribute or option filters as key/value pairs, e.g. {\"material\": \"wool\"}."
+
+[client_tools.parameters.properties.filters.properties.attributes.additionalProperties]
+type = "string"
+
+[client_tools.parameters.properties.filters.properties.sort]
+type = "string"
+enum = [ "relevance", "price_asc", "price_desc", "rating" ]
+description = "Result order; relevance unless the customer asked otherwise."
+
+[client_tools.parameters.properties.limit]
+type = "integer"
+minimum = 1
+maximum = 8
+description = "Maximum results to return."
+
+[[client_tools]]
+type = "function"
+name = "get_product_details"
+description = "Full details for one product: description, specs, review highlights, and for a product with options, its variants with their ids, prices, and stock. Use for a question about one product, before comparing finalists or choosing a variant, and for a reference shaped like a catalog id."
+strict = false
+
+[client_tools.parameters]
+type = "object"
+required = [ "product_id" ]
+additionalProperties = false
+
+[client_tools.parameters.properties.status]
+type = "string"
+maxLength = 60
+description = "A few plain words the customer sees while this runs, saying what you are doing for them; no tool or system names."
+
+[client_tools.parameters.properties.product_id]
+type = "string"
+description = "Catalog product_id to look up."
+
+[[client_tools]]
+type = "function"
+name = "get_cart"
+description = "Current cart contents with quantities and subtotal."
+strict = false
+
+[client_tools.parameters]
+type = "object"
+additionalProperties = false
+
+[client_tools.parameters.properties.status]
+type = "string"
+maxLength = 60
+description = "A few plain words the customer sees while this runs, saying what you are doing for them; no tool or system names."
+
+[[client_tools]]
+type = "function"
+name = "add_to_cart"
+description = "Add a product, or the chosen variant of a product with options, by a product_id a catalog or order tool returned this session; quantity defaults to 1. If the result says the item is unavailable, say so and offer an alternative; add that only once the customer chooses it."
+strict = false
+
+[client_tools.parameters]
+type = "object"
+required = [ "product_id" ]
+additionalProperties = false
+
+[client_tools.parameters.properties.status]
+type = "string"
+maxLength = 60
+description = "A few plain words the customer sees while this runs, saying what you are doing for them; no tool or system names."
+
+[client_tools.parameters.properties.product_id]
+type = "string"
+description = "product_id returned by a tool this session."
+
+[client_tools.parameters.properties.quantity]
+type = "integer"
+minimum = 1
+description = "Units to add; omit for one."
+
+[[client_tools]]
+type = "function"
+name = "update_cart_item"
+description = "Set the quantity of an item that is already in the cart."
+strict = false
+
+[client_tools.parameters]
+type = "object"
+required = [ "product_id", "quantity" ]
+additionalProperties = false
+
+[client_tools.parameters.properties.status]
+type = "string"
+maxLength = 60
+description = "A few plain words the customer sees while this runs, saying what you are doing for them; no tool or system names."
+
+[client_tools.parameters.properties.product_id]
+type = "string"
+description = "product_id of a line already in the cart."
+
+[client_tools.parameters.properties.quantity]
+type = "integer"
+minimum = 1
+description = "New quantity for the line."
+
+[[client_tools]]
+type = "function"
+name = "remove_from_cart"
+description = "Remove an item from the cart."
+strict = false
+
+[client_tools.parameters]
+type = "object"
+required = [ "product_id" ]
+additionalProperties = false
+
+[client_tools.parameters.properties.status]
+type = "string"
+maxLength = 60
+description = "A few plain words the customer sees while this runs, saying what you are doing for them; no tool or system names."
+
+[client_tools.parameters.properties.product_id]
+type = "string"
+description = "product_id of the line to remove."
+
+[[client_tools]]
+type = "function"
+name = "get_preferences"
+description = "The customer's profile, saved preferences, and remembered facts from past conversations. Call this once near the start of a conversation and apply it as defaults, not hard rules."
+strict = false
+
+[client_tools.parameters]
+type = "object"
+additionalProperties = false
+
+[client_tools.parameters.properties.status]
+type = "string"
+maxLength = 60
+description = "A few plain words the customer sees while this runs, saying what you are doing for them; no tool or system names."
+
+[[client_tools]]
+type = "function"
+name = "get_orders"
+description = "Recent orders with status and estimated delivery. Use for a status question that names no order and for a request to buy something again."
+strict = false
+
+[client_tools.parameters]
+type = "object"
+additionalProperties = false
+
+[client_tools.parameters.properties.status]
+type = "string"
+maxLength = 60
+description = "A few plain words the customer sees while this runs, saying what you are doing for them; no tool or system names."
+
+[client_tools.parameters.properties.limit]
+type = "integer"
+minimum = 1
+maximum = 20
+description = "Maximum orders to return."
+
+[[client_tools]]
+type = "function"
+name = "get_order_status"
+description = "Status, items, and tracking for one order the customer named."
+strict = false
+
+[client_tools.parameters]
+type = "object"
+required = [ "order_id" ]
+additionalProperties = false
+
+[client_tools.parameters.properties.status]
+type = "string"
+maxLength = 60
+description = "A few plain words the customer sees while this runs, saying what you are doing for them; no tool or system names."
+
+[client_tools.parameters.properties.order_id]
+type = "string"
+description = "Order id to look up."
+
+[[client_tools]]
+type = "function"
+name = "search_policies"
+description = "Search the store's own terms and help content: returns, shipping, warranties, membership, fees, and the buying guides."
+strict = false
+
+[client_tools.parameters]
+type = "object"
+required = [ "query" ]
+additionalProperties = false
+
+[client_tools.parameters.properties.status]
+type = "string"
+maxLength = 60
+description = "A few plain words the customer sees while this runs, saying what you are doing for them; no tool or system names."
+
+[client_tools.parameters.properties.query]
+type = "string"
+description = "The term or topic to look up."
+
+[[client_tools]]
+type = "function"
+name = "get_fulfillment_options"
+description = "Delivery and pickup options, with their dates, for given products at the customer's location."
+strict = false
+
+[client_tools.parameters]
+type = "object"
+required = [ "product_ids" ]
+additionalProperties = false
+
+[client_tools.parameters.properties.status]
+type = "string"
+maxLength = 60
+description = "A few plain words the customer sees while this runs, saying what you are doing for them; no tool or system names."
+
+[client_tools.parameters.properties.product_ids]
+type = "array"
+maxItems = 20
+description = "product_ids to quote options for."
+
+[client_tools.parameters.properties.product_ids.items]
+type = "string"
+
+[[client_tools]]
+type = "function"
+name = "save_memory"
+description = "Save a durable fact about the customer when they ask you to remember something or state a standing rule about how they shop. An ask to remember is the memory-personalization flow, and its skill says how the fact is worded: read it in the same round. Save the need an item reveals, never product or policy text."
+strict = false
+
+[client_tools.parameters]
+type = "object"
+required = [ "key", "value" ]
+additionalProperties = false
+
+[client_tools.parameters.properties.status]
+type = "string"
+maxLength = 60
+description = "A few plain words the customer sees while this runs, saying what you are doing for them; no tool or system names."
+
+[client_tools.parameters.properties.key]
+type = "string"
+maxLength = 64
+description = "Topic key; reuse an existing key to replace its value."
+
+[client_tools.parameters.properties.value]
+type = "string"
+maxLength = 200
+description = "The fact, worded to stand on its own later."
+
+[client_tools.parameters.properties.category]
+type = "string"
+enum = [ "preference", "constraint", "context" ]
+description = "constraint for a rule picks must respect; else preference or context."
+
+[[client_tools]]
+type = "function"
+name = "recall_memories"
+description = "Search the customer's saved memory for facts not already returned by get_preferences (older preferences, sizes, gift history, recurring needs). Use this only when something older or more specific would change your recommendation."
+strict = false
+
+[client_tools.parameters]
+type = "object"
+required = [ "topic" ]
+additionalProperties = false
+
+[client_tools.parameters.properties.status]
+type = "string"
+maxLength = 60
+description = "A few plain words the customer sees while this runs, saying what you are doing for them; no tool or system names."
+
+[client_tools.parameters.properties.topic]
+type = "string"
+maxLength = 100
+description = "Topic to search for, in a few words."
+
+[[client_tools]]
+type = "function"
+name = "present_products"
+description = "Show products from this session's results as cards; the UI fills in title, price, and image. Layout: carousel by default, grid to scan many options, list when order matters. Each pick's reason is the one judgment of yours on the card."
+strict = false
+
+[client_tools.parameters]
+type = "object"
+required = [ "picks" ]
+additionalProperties = false
+
+[client_tools.parameters.properties.title]
+type = "string"
+maxLength = 80
+description = "Short heading for the set of cards."
+
+[client_tools.parameters.properties.layout]
+type = "string"
+enum = [ "carousel", "grid", "list" ]
+description = "Card layout; carousel when omitted."
+
+[client_tools.parameters.properties.picks]
+type = "array"
+minItems = 1
+maxItems = 12
+description = "Products to show, recommended pick first."
+
+[client_tools.parameters.properties.picks.items]
+type = "object"
+required = [ "product_id" ]
+additionalProperties = false
+
+[client_tools.parameters.properties.picks.items.properties.product_id]
+type = "string"
+description = "product_id returned by a tool this session."
+
+[client_tools.parameters.properties.picks.items.properties.reason]
+type = "string"
+maxLength = 140
+description = "One clause tying the pick to a stated need."
+
+[[client_tools]]
+type = "function"
+name = "present_comparison"
+description = "Compare 2-4 finalists side by side, with pros, cons, and what each is best for. Use it once the customer has narrowed to them or asks how they differ; a fresh shortlist goes through present_products. The UI adds the price delta; your text says what the extra money buys."
+strict = false
+
+[client_tools.parameters]
+type = "object"
+required = [ "entries" ]
+additionalProperties = false
+
+[client_tools.parameters.properties.title]
+type = "string"
+maxLength = 80
+description = "Short heading for the comparison."
+
+[client_tools.parameters.properties.entries]
+type = "array"
+minItems = 2
+maxItems = 4
+description = "The finalists being compared."
+
+[client_tools.parameters.properties.entries.items]
+type = "object"
+required = [ "product_id" ]
+additionalProperties = false
+
+[client_tools.parameters.properties.entries.items.properties.product_id]
+type = "string"
+description = "product_id returned by a tool this session."
+
+[client_tools.parameters.properties.entries.items.properties.pros]
+type = "array"
+maxItems = 4
+description = "Short advantages, from tool results."
+
+[client_tools.parameters.properties.entries.items.properties.pros.items]
+type = "string"
+
+[client_tools.parameters.properties.entries.items.properties.cons]
+type = "array"
+maxItems = 3
+description = "Short drawbacks, from tool results."
+
+[client_tools.parameters.properties.entries.items.properties.cons.items]
+type = "string"
+
+[client_tools.parameters.properties.entries.items.properties.best_for]
+type = "string"
+maxLength = 80
+description = "Who or what this option suits best."
+
+[client_tools.parameters.properties.dimensions]
+type = "array"
+maxItems = 6
+description = "The dimensions the customer is weighing."
+
+[client_tools.parameters.properties.dimensions.items]
+type = "string"
+
+[client_tools.parameters.properties.recommended_product_id]
+type = "string"
+description = "The entry you recommend."
+
+[[client_tools]]
+type = "function"
+name = "present_plan"
+description = "Show a plan toward the customer's goal as steps with products attached. When no step will ever carry a product, the answer is know-how; use present_guide."
+strict = false
+
+[client_tools.parameters]
+type = "object"
+required = [ "title", "steps" ]
+additionalProperties = false
+
+[client_tools.parameters.properties.title]
+type = "string"
+maxLength = 80
+description = "Short heading for the plan."
+
+[client_tools.parameters.properties.intro]
+type = "string"
+maxLength = 240
+description = "One or two lines of framing, assumptions included."
+
+[client_tools.parameters.properties.steps]
+type = "array"
+minItems = 1
+maxItems = 12
+description = "The plan's steps, in working order."
+
+[client_tools.parameters.properties.steps.items]
+type = "object"
+required = [ "label" ]
+additionalProperties = false
+
+[client_tools.parameters.properties.steps.items.properties.label]
+type = "string"
+maxLength = 120
+description = "Step name in the customer's words."
+
+[client_tools.parameters.properties.steps.items.properties.detail]
+type = "string"
+maxLength = 240
+description = "One line on what the step covers."
+
+[client_tools.parameters.properties.steps.items.properties.product_ids]
+type = "array"
+maxItems = 8
+description = "Items for this step, your pick first."
+
+[client_tools.parameters.properties.steps.items.properties.product_ids.items]
+type = "string"
+
+[[client_tools]]
+type = "function"
+name = "present_guide"
+description = "Show a how-to, an idea, or an itinerary as a card of short sections. Use for guidance that is not a product plan; list sources when web content informed it."
+strict = false
+
+[client_tools.parameters]
+type = "object"
+required = [ "title", "sections" ]
+additionalProperties = false
+
+[client_tools.parameters.properties.title]
+type = "string"
+maxLength = 80
+description = "Short heading for the guide."
+
+[client_tools.parameters.properties.sections]
+type = "array"
+minItems = 1
+maxItems = 8
+description = "Sections of one to three sentences each."
+
+[client_tools.parameters.properties.sections.items]
+type = "object"
+required = [ "heading", "body" ]
+additionalProperties = false
+
+[client_tools.parameters.properties.sections.items.properties.heading]
+type = "string"
+maxLength = 80
+description = "Section heading."
+
+[client_tools.parameters.properties.sections.items.properties.body]
+type = "string"
+maxLength = 600
+description = "Section text."
+
+[client_tools.parameters.properties.related_product_ids]
+type = "array"
+maxItems = 8
+description = "Products from this session the guide relates to."
+
+[client_tools.parameters.properties.related_product_ids.items]
+type = "string"
+
+[client_tools.parameters.properties.sources]
+type = "array"
+maxItems = 5
+description = "Guides or pages the sections were drawn from."
+
+[client_tools.parameters.properties.sources.items]
+type = "string"
+
+[[client_tools]]
+type = "function"
+name = "present_order_status"
+description = "Show the status card for one order; the UI fills in the order data. Every answer about where an order stands goes through it. When several orders are in flight, send one card per order in the same round."
+strict = false
+
+[client_tools.parameters]
+type = "object"
+required = [ "order_id", "summary" ]
+additionalProperties = false
+
+[client_tools.parameters.properties.order_id]
+type = "string"
+description = "Order id from get_orders or get_order_status."
+
+[client_tools.parameters.properties.summary]
+type = "string"
+maxLength = 300
+description = "Current state and expected date, in a sentence."
+
+[client_tools.parameters.properties.next_step]
+type = "string"
+maxLength = 200
+description = "The one concrete thing the customer can do next."
+
+[[client_tools]]
+type = "function"
+name = "checkout"
+description = "Stage the current cart as an order summary the customer confirms in the app; it places no order and charges nothing. Use only when the customer asks to check out."
+strict = false
+
+[client_tools.parameters]
+type = "object"
+additionalProperties = false
+
+[client_tools.parameters.properties.note]
+type = "string"
+maxLength = 300
+description = "Anything the customer should check before confirming."
+
+[client_tools.parameters.properties.fulfillment_method]
+type = "string"
+enum = [ "delivery", "pickup", "shipping" ]
+description = "Method the customer chose, when they chose one."
+
+[[client_tools]]
+type = "function"
+name = "present_suggestions"
+description = "Give the turn its 1-4 chips; it ends the reply. Call it in the same round as the turn's last component, without waiting for that component's result. Alone, after the text, only on a turn with no component (a terms answer, a clarifying question, a confirmed add or save)."
+strict = false
+
+[client_tools.parameters]
+type = "object"
+required = [ "suggestions" ]
+additionalProperties = false
+
+[client_tools.parameters.properties.suggestions]
+type = "array"
+minItems = 1
+maxItems = 4
+description = "1-4 chips, each a brief imperative and each a different kind of step; leave out anything this turn already displayed."
+
+[client_tools.parameters.properties.suggestions.items]
+type = "string"
