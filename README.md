@@ -1,6 +1,6 @@
 # Commerce Agent — Rebyte Integration
 
-Run Anthropic's ACME retail shopping demo with the **Rebyte Agent API**. The
+Run Anthropic's ACME retail shopping demo with the **Rebyte Agents API**. The
 storefront supports product discovery, comparisons, cart updates, checkout
 summaries, and customer memory. Rebyte runs the hosted Agent; the Python app
 executes its commerce tools and streams the results into the original UI.
@@ -16,8 +16,7 @@ an order or charge a card.
 
 ## Get started
 
-You need Git, Python **3.11+**, Node.js **22+** with npm, and pnpm for the Rebyte
-CLI. Use the same terminal throughout setup. After cloning, run commands from
+You need Git, Python **3.11+**, Node.js **22+** with npm. Use the same terminal throughout setup. After cloning, run commands from
 the repository root.
 
 ### 1. Get a Rebyte API key
@@ -48,14 +47,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 (cd examples && npm ci)
 
-pnpm add --global https://github.com/ReByteAI/rebyte-agent-toolkit/releases/latest/download/rebyte-cli.tgz
-rebyte --version
 ```
-
-Use Rebyte CLI **v0.1.8 or later**. The install command downloads the CLI from
-GitHub Releases. If pnpm reports that its global bin directory is missing, run
-`pnpm setup`, open a new terminal, and repeat the environment and activation
-commands before installing the CLI.
 
 ### 3. Create your Agent from the included spec
 
@@ -63,15 +55,15 @@ The complete definition is [`rebyte/agent.toml`](rebyte/agent.toml). Validate it
 locally, then create the hosted Agent:
 
 ```sh
-rebyte agent validate -f rebyte/agent.toml
-rebyte agent create -f rebyte/agent.toml
+python scripts/setup_rebyte_agent.py --validate
+python scripts/setup_rebyte_agent.py --model gpt-5.6-luna
 ```
 
 Validation needs no key. Creation reads `REBYTE_API_KEY` from your shell and
-posts the resolved spec to Rebyte. The CLI prints:
+posts the resolved spec to Rebyte. The setup script uses the official OpenAI Python SDK (`client.beta.agents`) and prints:
 
 ```text
-Created Agent <agent-id> (ACME Shopping Agent)
+agent_<id>
 ```
 
 Copy the returned ID into the next command:
@@ -95,13 +87,13 @@ chmod 600 .env
 
 [`.env.example`](.env.example) lists the available settings. FastAPI loads
 `.env` automatically, so later app starts only need the virtualenv activated.
-The CLI reads shell environment variables; export `REBYTE_API_KEY` again when
-running CLI commands in a new terminal. Keep `.env` private; it is gitignored.
+The setup script also loads the root `.env`; export `REBYTE_API_KEY` again when
+running setup commands in a new terminal. Keep `.env` private; it is gitignored.
 
 | Variable | Purpose |
 |---|---|
 | `REBYTE_API_KEY` | Your organization's API key, kept in FastAPI. |
-| `REBYTE_AGENT_ID` | The ID printed by `rebyte agent create`. |
+| `REBYTE_AGENT_ID` | The ID printed by `setup_rebyte_agent.py`. |
 | `REBYTE_BASE_URL` | Optional API host; defaults to `https://api.rebyte.ai`. |
 
 ### 5. Start the storefront
@@ -125,20 +117,19 @@ Anthropic API key, storefront MCP server, or Cloudflare setup.
 ## What the Agent spec contains
 
 [`rebyte/agent.toml`](rebyte/agent.toml) is the complete, reusable spec passed to
-both `create` and `apply`:
+the setup script and Session converter:
 
 | Part | Included configuration or implementation |
 |---|---|
 | Identity and model | `ACME Shopping Agent`, description, and `llm = "deepseek-v4-pro"`. |
-| System prompt | `prompt_file` references the original [managed-agent prompt](shopping-agent/managed-agents/shopping-agent/system.md); the CLI reads it relative to the spec. |
-| Skills | Five `[[skills]]` entries point to this public repository's [shopping skills](shopping-agent/skills/); `capabilities = ["skills"]` enables Rebyte to run them. |
-| Client tools | Twenty `[[client_tools]]` entries contain the original names, descriptions, and parameter schemas. `strict = false` preserves optional fields and dictionaries. |
+| System prompt | `prompt_file` references the original [managed-agent prompt](shopping-agent/managed-agents/shopping-agent/system.md); the setup script reads it relative to the spec. |
+| Skills | Five `[[skills]]` entries point to this public repository's [shopping skills](shopping-agent/skills/); the host packages each Skill for the new Session environment. |
+| Client tools | Twenty `[[client_tools]]` entries contain the original names, descriptions, and parameter schemas. The converter omits the legacy `strict` field; original optional fields and dictionaries remain in `parameters`. |
 | Tool execution | The original [ShoppingToolExecutor](shopping-agent/core/shopping_agent/executor.py) runs in the Python host. The spec declares tools; their implementations stay in this repository. |
 
-The CLI creates the Agent's configuration, including its prompt, skill
-references, and client tool definitions. The
+The setup script creates the Agent's configuration, including its prompt, Web Search, and client tool definitions. The host sends Skills as inline ZIPs when it creates each Session; execution installs them lazily in that Session’s Sandbox. The
 [Rebyte adapter](examples/retail/api/rebyte_agent.py) then calls that Agent
-through Responses and posts each tool result back. You do not need to create
+through Agents Session events and posts each tool result back. You do not need to create
 tools or copy prompts manually in the Rebyte UI.
 
 To change the model or Agent configuration, edit the full spec, validate it,
@@ -147,21 +138,20 @@ and apply it to the existing Agent:
 ```sh
 export REBYTE_API_KEY="rbk_your_key"
 export REBYTE_AGENT_ID="YOUR_RETURNED_AGENT_ID"
-rebyte agent validate -f rebyte/agent.toml
-rebyte agent apply "$REBYTE_AGENT_ID" -f rebyte/agent.toml
+python scripts/setup_rebyte_agent.py --validate
+python scripts/setup_rebyte_agent.py --agent-id "$REBYTE_AGENT_ID"
 ```
 
-`apply` replaces the Agent configuration with the complete file. Keep client
+The setup script updates model, instructions and the complete tool list. Keep client
 tool definitions aligned with their Python implementations. See the
-[Agent configuration reference](https://rebyte.ai/docs/cli/agent-configuration)
-for the spec format and [`rebyte/README.md`](rebyte/README.md) for the runtime
-boundary and result handoff.
+[local converter](examples/retail/api/rebyte_config.py)
+for the business manifest format and [`rebyte/README.md`](rebyte/README.md) for the runtime
+boundary and result handoff. This Commerce-owned manifest is not the Toolkit CLI
+format. The generated HTTP requests use native Agents API fields.
 
 ## Troubleshooting
 
-- **Validation rejects a dictionary schema:** check `rebyte --version` and
-  install the current CLI with the command above.
-- **401 or missing key:** export `REBYTE_API_KEY` for the CLI; check the root
+- **401 or missing key:** set `REBYTE_API_KEY` for the setup script; check the root
   `.env` for FastAPI. Restart the demo after changing its configuration.
 - **403:** use an organization key with `tasks:read` and `tasks:write`.
 - **Agent not found:** use the ID returned by `create` and a key from the same
@@ -186,6 +176,12 @@ For integration development:
 pip install -r requirements-dev.txt
 ruff check . && ruff format --check . && pytest && python scripts/check.py
 ```
+
+Run `python scripts/test_rebyte_live.py` for a real Agents API test that creates
+a fresh Agent, drives the retail HTTP routes through search, cart and checkout,
+checks installed Skills and persisted function results, and deletes its resources.
+It uses an in-process FastAPI transport with a real remote model/Sandbox; it does
+not replace manual browser verification. See [test setup](rebyte/README.md#verify).
 
 The adapter tests check all twenty tool contracts against the upstream
 registry and cover continuation, terminal-result storage, and stream failures.

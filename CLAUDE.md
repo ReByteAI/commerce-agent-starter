@@ -18,7 +18,7 @@ paths each, four vertical examples, and a Claude Code plugin.
 - `plugins/commerce-builder/`: six skills, four commands; `.claude-plugin/marketplace.json` points at it.
 - `docs/`: `safety.md`, `backends.md`, `deployment.md`. `scripts/`: install, demo, smoke, screenshots, check, deploy, verify.
 - `tests/`: the suites that span packages (both roles on all three paths); each package keeps its own `tests/`.
-- `rebyte/README.md` documents the integration. `rebyte/agent.toml`: the pre-created Rebyte Agent's prompt, skills, and original commerce contracts as client tools. `examples/retail/api/rebyte_agent.py` executes those tools in the retail host and posts results through the Responses and Conversations APIs.
+- `rebyte/README.md` documents the integration. `rebyte/agent.toml`: the pre-created Rebyte Agent's prompt, skills, and original commerce contracts as client tools. `examples/retail/api/rebyte_agent.py` executes those tools in the retail host and posts results through Agents Session events. `rebyte_config.py` resolves the local manifest into Agent definitions and per-Session inline Skills; `scripts/setup_rebyte_agent.py` creates or updates the API Agent. `scripts/test_rebyte_live.py` drives real Agents API execution through isolated in-process retail HTTP routes and cleans up its test resources.
 
 `requirements.txt` installs the seven packages and their pinned dependencies (`requirements-dev.txt`
 adds pytest and ruff); `scripts/install.sh` runs it.

@@ -3,7 +3,6 @@
 
 """The host's tool-result handoff preserves the original execution and ending rules."""
 
-import json
 import tomllib
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,10 +15,20 @@ from shopping_agent import ShoppingAgentConfig
 from shopping_agent.tools.registry import INLINE_CONTEXT_DESCRIPTIONS, build_tools
 
 
-class ResponseStream:
-    def __init__(self, calls, terminal="response.completed"):
-        self.events = [{"type": "response.output_item.done", "item": call} for call in calls] + [
-            {"type": terminal, "response": {"conversation": {"id": "conv_test"}}}
+class SessionStream:
+    def __init__(self, rounds, terminal="cancelled"):
+        self.events = [
+            SimpleNamespace(
+                type="agent.session.requires_action",
+                session=SimpleNamespace(required_actions=calls),
+            )
+            for calls in rounds
+        ] + [
+            SimpleNamespace(
+                type=f"agent.session.turn.{terminal}",
+                turn=SimpleNamespace(status=terminal, usage=None, error=None),
+            ),
+            SimpleNamespace(type="agent.session.idle"),
         ]
         self.close = AsyncMock()
 
@@ -29,25 +38,21 @@ class ResponseStream:
 
 
 def call(name, arguments, call_id):
-    return {
-        "type": "function_call",
-        "id": f"item_{call_id}",
-        "call_id": call_id,
-        "name": name,
-        "arguments": json.dumps(arguments),
-    }
+    return SimpleNamespace(
+        type="function_call", call_id=call_id, turn_id="turn_test", name=name, arguments=arguments
+    )
 
 
 def make_agent(monkeypatch, backend, session, streams, config=None):
     monkeypatch.setenv("REBYTE_API_KEY", "test-key")
     monkeypatch.setenv("REBYTE_AGENT_ID", "test-agent")
+    events = SimpleNamespace(stream=AsyncMock(side_effect=streams), create=AsyncMock())
     client = SimpleNamespace(
-        responses=SimpleNamespace(create=AsyncMock(side_effect=streams)),
-        conversations=SimpleNamespace(items=SimpleNamespace(create=AsyncMock())),
+        beta=SimpleNamespace(agents=SimpleNamespace(sessions=SimpleNamespace(events=events)))
     )
     agent = RebyteShoppingAgent(backend=backend, config=config, client=client)
-    agent._conversations[session.session_id] = "conv_test"
-    return agent, client
+    agent._sessions[session.session_id] = "sess_test"
+    return agent, events
 
 
 async def turn(agent, session, state, text="Find a tent"):
@@ -75,33 +80,37 @@ def test_manifest_preserves_every_original_host_tool():
     assert not manifest.get("mcp_servers")
 
 
-async def test_read_continues_but_clean_presentation_saves_without_model_call(
+async def test_read_continues_but_presentation_stores_results_and_cancels_atomically(
     monkeypatch, backend, session, state
 ):
-    streams = [
-        ResponseStream([call("search_products", {"query": "tent"}, "search")]),
-        ResponseStream(
+    stream = SessionStream(
+        [
+            [call("search_products", {"query": "tent"}, "search")],
             [
                 call("present_products", {"picks": [{"product_id": "AR-1201"}]}, "cards"),
                 call("present_suggestions", {"suggestions": ["Add the tent"]}, "chips"),
-            ]
-        ),
-        ResponseStream([]),
-    ]
-    agent, client = make_agent(monkeypatch, backend, session, streams)
+            ],
+        ]
+    )
+    followup = SessionStream([], terminal="completed")
+    agent, events_api = make_agent(monkeypatch, backend, session, [stream, followup])
     events = await turn(agent, session, state)
     assert events[-1].type == "turn_complete"
     assert sum(event.type == "ui" for event in events) == 2
-    assert client.responses.create.await_count == 2
-    result = client.responses.create.await_args_list[1].kwargs["input"]
-    assert result[0]["call_id"] == "search"
-    assert "AR-1201" in result[0]["output"]
-    stored = client.conversations.items.create.await_args.kwargs
-    assert stored["conversation_id"] == "conv_test"
-    assert [item["call_id"] for item in stored["items"]] == ["cards", "chips"]
+    batches = [c.kwargs["events"] for c in events_api.create.await_args_list]
+    assert batches[1][0]["call_id"] == "search"
+    assert "AR-1201" in batches[1][0]["output"]
+    assert [e["type"] for e in batches[2]] == [
+        "agent.session.input.tool_result",
+        "agent.session.input.tool_result",
+        "agent.session.input.cancel",
+    ]
     await turn(agent, session, state, "Thanks")
-    assert client.responses.create.await_args.kwargs["input"] == "Thanks"
-    assert all(stream.close.await_count == 1 for stream in streams)
+    assert (
+        events_api.create.await_args.kwargs["events"][0]["input"][0]["content"][0]["text"]
+        == "Thanks"
+    )
+    assert stream.close.await_count == followup.close.await_count == 1
 
 
 @pytest.mark.parametrize("mixed_read", [False, True])
@@ -113,64 +122,54 @@ async def test_failed_presentation_or_mixed_read_round_continues(
         if mixed_read
         else call("present_products", {"picks": [{"product_id": "unknown"}]}, "bad-card")
     )
-    agent, client = make_agent(
+    agent, events_api = make_agent(
         monkeypatch,
         backend,
         session,
         [
-            ResponseStream(
-                [
-                    first,
-                    call("present_suggestions", {"suggestions": ["Find a tent"]}, "chips"),
-                ]
-            ),
-            ResponseStream([]),
-        ],
-    )
-    await turn(agent, session, state)
-    assert client.responses.create.await_count == 2
-    assert len(client.responses.create.await_args.kwargs["input"]) == 2
-    client.conversations.items.create.assert_not_awaited()
-
-
-async def test_storage_failure_does_not_report_turn_complete(monkeypatch, backend, session, state):
-    agent, client = make_agent(
-        monkeypatch,
-        backend,
-        session,
-        [
-            ResponseStream(
-                [
-                    call("present_suggestions", {"suggestions": ["Find a tent"]}, "chips"),
-                ]
+            SessionStream(
+                [[first, call("present_suggestions", {"suggestions": ["Find a tent"]}, "chips")]],
+                terminal="completed",
             )
         ],
     )
-    client.conversations.items.create.side_effect = RuntimeError("storage unavailable")
+    await turn(agent, session, state)
+    outputs = events_api.create.await_args.kwargs["events"]
+    assert len(outputs) == 2
+    assert all(e["type"] == "agent.session.input.tool_result" for e in outputs)
+
+
+@pytest.mark.parametrize("cancel_error", [None, RuntimeError("cancellation also failed")])
+async def test_storage_failure_does_not_report_turn_complete(
+    monkeypatch, backend, session, state, cancel_error
+):
+    agent, events_api = make_agent(
+        monkeypatch,
+        backend,
+        session,
+        [SessionStream([[call("present_suggestions", {"suggestions": ["Find a tent"]}, "chips")]])],
+    )
+    events_api.create.side_effect = [None, RuntimeError("storage unavailable"), cancel_error]
     events = []
     with pytest.raises(RuntimeError, match="storage unavailable"):
         async for event in agent.stream_turn([], session, state):
             events.append(event)
     assert all(event.type != "turn_complete" for event in events)
-    assert client.responses.create.await_count == 1
 
 
-async def test_failed_response_never_executes_cart_write(monkeypatch, backend, session, state):
+async def test_item_done_without_requires_action_never_executes_cart_write(
+    monkeypatch, backend, session, state
+):
     backend.add_to_cart = AsyncMock()
-    agent, client = make_agent(
-        monkeypatch,
-        backend,
-        session,
-        [
-            ResponseStream(
-                [
-                    call("add_to_cart", {"product_id": "AR-1201"}, "write"),
-                ],
-                terminal="response.failed",
-            )
-        ],
+    stream = SessionStream([], terminal="failed")
+    stream.events.insert(
+        0,
+        SimpleNamespace(
+            type="agent.session.turn.item.done",
+            item=call("add_to_cart", {"product_id": "AR-1201"}, "write"),
+        ),
     )
-    with pytest.raises(RuntimeError, match="response.failed"):
+    agent, _ = make_agent(monkeypatch, backend, session, [stream])
+    with pytest.raises(RuntimeError, match="failed"):
         await turn(agent, session, state)
     backend.add_to_cart.assert_not_awaited()
-    client.conversations.items.create.assert_not_awaited()
