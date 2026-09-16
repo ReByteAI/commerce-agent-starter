@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 from dataclasses import replace
 from pathlib import Path
 from uuid import uuid4
@@ -19,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "examples"))
 
 
-async def main(model: str) -> None:
+async def main(model: str, tool_loading: str, report_path: Path | None) -> None:
     load_dotenv(ROOT / ".env", override=False)
     base = os.getenv("REBYTE_BASE_URL", "https://api.rebyte.ai/v1").rstrip("/")
     if not base.endswith("/v1"):
@@ -31,11 +32,20 @@ async def main(model: str) -> None:
     async with AsyncOpenAI(
         api_key=os.environ["REBYTE_API_KEY"], base_url=base, max_retries=0
     ) as client:
-        config = agent_parameters(model)
+        config = agent_parameters(model, defer_functions=tool_loading == "deferred")
         config["name"] = f"Commerce live test {uuid4()}"
         saved = await client.beta.agents.create(**config)
+        print(json.dumps({"agent": saved.id, "tool_loading": tool_loading}), flush=True)
         os.environ["REBYTE_AGENT_ID"] = saved.id
         sessions = []
+        report = {
+            "model": model,
+            "tool_loading": tool_loading,
+            "agent": saved.id,
+            "prompts": [],
+            "passed": False,
+            "cleanup": False,
+        }
         try:
             from commerce_common.memory import InMemoryMemoryStore
             from retail.api.main import agent, app
@@ -52,6 +62,7 @@ async def main(model: str) -> None:
                 headers = {"X-Session-Id": browser_id}
 
                 async def prompt(text: str) -> list[dict]:
+                    started = time.monotonic()
                     async with asyncio.timeout(600):
                         response = await host.post(
                             "/api/chat", json={"message": text}, headers=headers
@@ -72,20 +83,18 @@ async def main(model: str) -> None:
                     errors = [event for event in events if event["type"] == "error"]
                     assert not errors, errors
                     assert any(event["type"] == "turn_complete" for event in events), events
-                    print(
-                        json.dumps(
-                            {
-                                "prompt": text,
-                                "events": len(events),
-                                "tools": [
-                                    event["data"]["tool"]
-                                    for event in events
-                                    if event["type"] == "tool_call"
-                                ],
-                            }
-                        ),
-                        flush=True,
-                    )
+                    measurement = {
+                        "prompt": text,
+                        "events": len(events),
+                        "elapsed_seconds": round(time.monotonic() - started, 3),
+                        "tools": [
+                            event["data"]["tool"]
+                            for event in events
+                            if event["type"] == "tool_call"
+                        ],
+                    }
+                    report["prompts"].append(measurement)
+                    print(json.dumps(measurement), flush=True)
                     return events
 
                 found = await prompt(
@@ -114,11 +123,34 @@ async def main(model: str) -> None:
                 assert native.status == "idle"
                 assert len(native.environment.skills) == 5
                 items = [item async for item in client.beta.agents.sessions.items.list(native_id)]
+                search_calls = [
+                    item
+                    for item in items
+                    if item.type == "function_call" and item.name == "tool_search"
+                ]
+                assert bool(search_calls) == (tool_loading == "deferred"), (
+                    "Unexpected tool-search behavior"
+                )
                 assert any(item.type == "command_execution" for item in items), (
                     "Skill was not read in Sandbox"
                 )
                 assert any(item.type == "function_call_output" for item in items), (
                     "No persisted host outputs"
+                )
+                turns = [
+                    turn.model_dump(mode="json")
+                    async for turn in client.beta.agents.sessions.turns.list(native_id)
+                ]
+                report.update(
+                    {
+                        "passed": True,
+                        "session": native_id,
+                        "turns": turns,
+                        "tool_search_calls": len(search_calls),
+                        "function_calls": [
+                            item.name for item in items if item.type == "function_call"
+                        ],
+                    }
                 )
                 print(
                     json.dumps(
@@ -143,9 +175,21 @@ async def main(model: str) -> None:
                 await client.beta.agents.sessions.delete(session_id)
             await client.beta.agents.delete(saved.id)
             print(json.dumps({"cleanup": True, "sessions_deleted": len(sessions)}), flush=True)
+            report["cleanup"] = True
+            if report_path is not None:
+                report_path.parent.mkdir(parents=True, exist_ok=True)
+                report_path.write_text(json.dumps(report, indent=2) + "\n")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", default="gpt-5.6-luna")
-    asyncio.run(main(parser.parse_args().model))
+    parser.add_argument(
+        "--tool-loading",
+        choices=["eager", "deferred"],
+        default="deferred",
+        help="Compare the original eager configuration against deferred functions",
+    )
+    parser.add_argument("--report", type=Path, help="Write measurements and resource IDs as JSON")
+    args = parser.parse_args()
+    asyncio.run(main(args.model, args.tool_loading, args.report))

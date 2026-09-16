@@ -28,6 +28,10 @@ def main() -> None:
                 {
                     "model": config["model"],
                     "tools": len(config["tools"]),
+                    "deferred_functions": sum(
+                        tool["type"] == "function" and tool["defer_loading"]
+                        for tool in config["tools"]
+                    ),
                     "skills": [s["name"] for s in environment["skills"]],
                 }
             )

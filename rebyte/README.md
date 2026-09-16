@@ -1,7 +1,8 @@
 # Rebyte Agents API integration
 
 The retail storefront uses one pre-created API Agent, twenty original Commerce
-client functions, explicit Web Search, and five per-Session Skills. The official
+client functions loaded on demand through `tool_search`, explicit Web Search,
+and five per-Session Skills. The official
 OpenAI Python SDK 3.13.0 connects to the configured Rebyte `/v1` endpoint.
 
 ## Setup
@@ -42,7 +43,12 @@ This integration does not require a storefront MCP server or an Anthropic key.
 
 ## Tool and Skill execution
 
-Saved Agent tools are the twenty Commerce function definitions plus Web Search.
+Saved Agent tools are `tool_search`, the twenty Commerce function definitions
+with `defer_loading: true`, and Web Search. Initially the model receives the search
+tool, Web Search and environment tools. It searches for the needed business
+functions; only matching schemas become available, and remain loaded in that
+Session. Search, cart, checkout and presentation calls still go through the
+original Python handlers and validation. No storefront MCP server is involved.
 Each browser conversation creates a hosted Environment with five inline Skill ZIPs.
 The ZIP bytes are deterministic for identical checked-in files. First Sandbox
 initialization installs them; later Turns and resume do not reinstall them.
@@ -61,6 +67,22 @@ python scripts/check.py
 python scripts/setup_rebyte_agent.py --validate
 python scripts/test_rebyte_live.py --model gpt-5.6-luna
 ```
+
+Compare the same search, cart and checkout flow with eager and deferred tools:
+
+```sh
+python scripts/test_rebyte_live.py --model gpt-5.6-luna --tool-loading eager --report /tmp/commerce-eager.json
+python scripts/test_rebyte_live.py --model gpt-5.6-luna --tool-loading deferred --report /tmp/commerce-deferred.json
+```
+
+Reports include per-prompt elapsed time, actual Turn token usage, search calls,
+and Agent/Session IDs for inspecting model-step tool definitions in Langfuse.
+The full definitions still travel in Agent creation; deferred loading reduces
+model context, not the Agent creation request. Loaded tools accumulate within a
+Session, and discovery adds model steps, so compare cumulative token use and
+latency as well as the first model call. `--tool-loading eager` is a comparison
+fixture; normal setup defaults to deferred functions. Update an existing saved
+Agent with the setup script before creating new browser conversations.
 
 Local product verification uses the retail UI at `http://localhost:3000` and
 FastAPI at `http://localhost:8000`: search, product presentation, cart add, and

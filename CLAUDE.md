@@ -19,6 +19,9 @@ paths each, four vertical examples, and a Claude Code plugin.
 - `docs/`: `safety.md`, `backends.md`, `deployment.md`. `scripts/`: install, demo, smoke, screenshots, check, deploy, verify.
 - `tests/`: the suites that span packages (both roles on all three paths); each package keeps its own `tests/`.
 - `rebyte/README.md` documents the integration. `rebyte/agent.toml`: the pre-created Rebyte Agent's prompt, skills, and original commerce contracts as client tools. `examples/retail/api/rebyte_agent.py` executes those tools in the retail host and posts results through Agents Session events. `rebyte_config.py` resolves the local manifest into Agent definitions and per-Session inline Skills; `scripts/setup_rebyte_agent.py` creates or updates the API Agent. `scripts/test_rebyte_live.py` drives real Agents API execution through isolated in-process retail HTTP routes and cleans up its test resources.
+  Rebyte Agent definitions use `tool_search` with all twenty Commerce functions
+  deferred. The live script's `--tool-loading eager|deferred` compares both
+  configurations; `--report` records timing, token usage and trace resource IDs.
 
 `requirements.txt` installs the seven packages and their pinned dependencies (`requirements-dev.txt`
 adds pytest and ruff); `scripts/install.sh` runs it.
@@ -26,7 +29,10 @@ adds pytest and ruff); `scripts/install.sh` runs it.
 ## Design rules
 
 - One model owns the conversation; a rule goes in a tool description, the prompt, or a skill by how often it applies.
-- The static prompt and `tools[]` are the same bytes on every turn; per-request data goes in the fenced block after the breakpoint.
+- The upstream runtimes keep the static prompt and `tools[]` identical on every
+  turn; per-request data goes in the fenced block after the breakpoint. Rebyte
+  retains the full saved definitions while exposing deferred functions to the
+  model as the Session discovers them.
 - UI is presentation tool calls, validated and filled in on the server, streamed as `ui` events.
 - Third-party content is fenced data; writes are provenance-gated and capped in code; `checkout` charges nothing; merchant writes apply only through host approval.
 - Core is domain-neutral; a vertical adds UI through `PresentationExtension` and keeps the rest to itself.

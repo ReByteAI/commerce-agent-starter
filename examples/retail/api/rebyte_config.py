@@ -15,14 +15,18 @@ ROOT = Path(__file__).resolve().parents[3]
 MANIFEST = ROOT / "rebyte" / "agent.toml"
 
 
-def agent_parameters(model: str | None = None) -> dict[str, Any]:
+def agent_parameters(model: str | None = None, *, defer_functions: bool = True) -> dict[str, Any]:
     spec = tomllib.loads(MANIFEST.read_text())
     return {
         "name": spec["name"],
         "model": spec["llm"] if model is None else model,
         "instructions": (MANIFEST.parent / spec["prompt_file"]).read_text(),
-        "tools": [
-            {key: tool[key] for key in ("type", "name", "description", "parameters")}
+        "tools": ([{"type": "tool_search"}] if defer_functions else [])
+        + [
+            {
+                **{key: tool[key] for key in ("type", "name", "description", "parameters")},
+                "defer_loading": defer_functions,
+            }
             for tool in spec["client_tools"]
         ]
         + [{"type": "web_search"}],

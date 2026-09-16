@@ -127,7 +127,11 @@ the setup script and Session converter:
 | Client tools | Twenty `[[client_tools]]` entries contain the original names, descriptions, and parameter schemas. The converter omits the legacy `strict` field; original optional fields and dictionaries remain in `parameters`. |
 | Tool execution | The original [ShoppingToolExecutor](shopping-agent/core/shopping_agent/executor.py) runs in the Python host. The spec declares tools; their implementations stay in this repository. |
 
-The setup script creates the Agent's configuration, including its prompt, Web Search, and client tool definitions. The host sends Skills as inline ZIPs when it creates each Session; execution installs them lazily in that Session’s Sandbox. The
+The setup script creates the Agent's configuration, including its prompt, Web Search,
+`tool_search`, and twenty client functions with `defer_loading: true`. Their schemas
+reach the model as needed; the original host still executes the calls. The host
+sends Skills as inline ZIPs when it creates each Session; execution installs them
+lazily in that Session’s Sandbox. The
 [Rebyte adapter](examples/retail/api/rebyte_agent.py) then calls that Agent
 through Agents Session events and posts each tool result back. You do not need to create
 tools or copy prompts manually in the Rebyte UI.
